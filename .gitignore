@@ -1,0 +1,13 @@
+# Rojo
+sourcemap.json
+
+# Roblox Studio locks
+*.rbxl.lock
+*.rbxlx.lock
+
+# Logs
+*.log
+
+# OS trash
+Thumbs.db
+.DS_Store

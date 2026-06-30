@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local VehicleDriveController = require(script.Parent.VehicleDriveController)
 local TeamColors = require(script.Parent.TeamColors)
 
 local VehicleSpawner = {}
@@ -163,6 +164,7 @@ function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner
 	paintVehicle(vehicle, teamOwner or 0)
 	protectDriverSeat(vehicle)
 	seatOwner(player, vehicle)
+	VehicleDriveController.RegisterVehicle(vehicle, player)
 
 	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Owner:", player.Name, "TeamOwner:", teamOwner)
 

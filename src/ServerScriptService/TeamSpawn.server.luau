@@ -13,11 +13,13 @@ local TEAM_DATA = {
 	Blue = {
 		color = Color3.fromRGB(0, 60, 255),
 		spawn = blueSpawn,
+		teamOwner = 2,
 	},
 
 	Red = {
 		color = Color3.fromRGB(255, 40, 40),
 		spawn = redSpawn,
+		teamOwner = 1,
 	},
 }
 
@@ -68,8 +70,16 @@ local function teleportPlayer(player: Player, teamName: string)
 end
 
 local function selectTeam(player: Player, teamName: string)
+	local data = TEAM_DATA[teamName]
+	if not data then
+		return
+	end
+
 	player:SetAttribute("TeamSelected", true)
 	player:SetAttribute("TeamName", teamName)
+	player:SetAttribute("TeamOwner", data.teamOwner)
+
+	print("[TeamSpawn] Player selected team:", player.Name, teamName, "TeamOwner:", data.teamOwner)
 
 	applyTeamVisual(player, teamName)
 	teleportPlayer(player, teamName)
@@ -92,6 +102,7 @@ end)
 Players.PlayerAdded:Connect(function(player)
 	player:SetAttribute("TeamSelected", false)
 	player:SetAttribute("TeamName", "")
+	player:SetAttribute("TeamOwner", 0)
 
 	player.CharacterAdded:Connect(function()
 		task.wait(0.2)

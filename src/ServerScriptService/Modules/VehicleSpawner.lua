@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 
 local VehicleDriveController = require(script.Parent.VehicleDriveController)
 local TeamColors = require(script.Parent.TeamColors)
@@ -19,6 +20,42 @@ local function getActiveVehiclesFolder()
 	end
 
 	return folder
+end
+
+local function getPlayerTeamOwner(player)
+	local attr = player:GetAttribute("TeamOwner")
+	if attr ~= nil then
+		return attr
+	end
+
+	local teamValue = player:GetAttribute("Team")
+	if teamValue ~= nil then
+		return teamValue
+	end
+
+	if player.Team then
+		local teamAttr = player.Team:GetAttribute("TeamOwner")
+		if teamAttr ~= nil then
+			return teamAttr
+		end
+
+		local teamNumber = tonumber(player.Team.Name)
+		if teamNumber then
+			return teamNumber
+		end
+
+		local lowerName = string.lower(player.Team.Name)
+
+		if lowerName == "red" or lowerName == "червоні" or lowerName == "червона" then
+			return 1
+		end
+
+		if lowerName == "blue" or lowerName == "сині" or lowerName == "синя" then
+			return 2
+		end
+	end
+
+	return nil
 end
 
 local function getTeamColorPart(vehicle)
@@ -83,7 +120,7 @@ local function protectDriverSeat(vehicle)
 		end
 
 		local character = humanoid.Parent
-		local player = game.Players:GetPlayerFromCharacter(character)
+		local player = Players:GetPlayerFromCharacter(character)
 
 		if not player then
 			humanoid.Sit = false
@@ -91,9 +128,17 @@ local function protectDriverSeat(vehicle)
 		end
 
 		local ownerUserId = vehicle:GetAttribute("OwnerUserId")
+		local vehicleTeamOwner = vehicle:GetAttribute("TeamOwner")
+		local playerTeamOwner = getPlayerTeamOwner(player)
 
 		if ownerUserId ~= player.UserId then
 			print("[VehicleSpawner] Seat access denied:", player.Name, "tried to steal", vehicle.Name)
+			humanoid.Sit = false
+			return
+		end
+
+		if tonumber(vehicleTeamOwner) ~= tonumber(playerTeamOwner) then
+			print("[VehicleSpawner] Seat team denied:", player.Name, "vehicle:", vehicleTeamOwner, "player:", playerTeamOwner)
 			humanoid.Sit = false
 			return
 		end
@@ -124,6 +169,26 @@ local function seatOwner(player, vehicle)
 end
 
 function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner)
+	local playerTeamOwner = getPlayerTeamOwner(player)
+
+	if playerTeamOwner == nil then
+		warn("[VehicleSpawner] Spawn denied: player has no TeamOwner:", player.Name)
+		return nil
+	end
+
+	if tonumber(playerTeamOwner) ~= tonumber(teamOwner) then
+		warn(
+			"[VehicleSpawner] Spawn denied: wrong team:",
+			player.Name,
+			"PlayerTeamOwner:",
+			playerTeamOwner,
+			"SpawnTeamOwner:",
+			teamOwner
+		)
+
+		return nil
+	end
+
 	local vehiclesFolder = ReplicatedStorage:WaitForChild(VEHICLES_FOLDER_NAME)
 	local template = vehiclesFolder:FindFirstChild(vehicleName)
 

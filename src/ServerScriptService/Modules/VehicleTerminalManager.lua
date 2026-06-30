@@ -47,6 +47,72 @@ local function getWSpawn(object)
 	return nil
 end
 
+local function getPlayerTeamOwner(player)
+	local attr = player:GetAttribute("TeamOwner")
+	if attr ~= nil then
+		return attr
+	end
+
+	local teamValue = player:GetAttribute("Team")
+	if teamValue ~= nil then
+		return teamValue
+	end
+
+	if player.Team then
+		local teamAttr = player.Team:GetAttribute("TeamOwner")
+		if teamAttr ~= nil then
+			return teamAttr
+		end
+
+		local teamNumber = tonumber(player.Team.Name)
+		if teamNumber then
+			return teamNumber
+		end
+
+		local lowerName = string.lower(player.Team.Name)
+
+		if lowerName == "red" or lowerName == "червоні" or lowerName == "червона" then
+			return 1
+		end
+
+		if lowerName == "blue" or lowerName == "сині" or lowerName == "синя" then
+			return 2
+		end
+	end
+
+	return nil
+end
+
+local function canUseTerminal(player, terminal)
+	local playerTeamOwner = getPlayerTeamOwner(player)
+	local terminalTeamOwner = terminal:GetAttribute("TeamOwner")
+
+	if terminalTeamOwner == nil then
+		warn("[VehicleTerminalManager] Terminal has no TeamOwner:", terminal:GetFullName())
+		return false
+	end
+
+	if playerTeamOwner == nil then
+		warn("[VehicleTerminalManager] Player has no TeamOwner:", player.Name)
+		return false
+	end
+
+	if tonumber(playerTeamOwner) ~= tonumber(terminalTeamOwner) then
+		warn(
+			"[VehicleTerminalManager] Wrong team terminal denied:",
+			player.Name,
+			"PlayerTeamOwner:",
+			playerTeamOwner,
+			"TerminalTeamOwner:",
+			terminalTeamOwner
+		)
+
+		return false
+	end
+
+	return true
+end
+
 local function setupPrompt(object)
 	if not isVehicleTerminal(object) then
 		return
@@ -76,6 +142,11 @@ local function setupPrompt(object)
 
 	prompt.Triggered:Connect(function(player)
 		print("[VehicleTerminal] Open requested by", player.Name)
+
+		if not canUseTerminal(player, object) then
+			return
+		end
+
 		getSpawnRemote():FireClient(player, "OpenMenu", object)
 	end)
 end
@@ -89,7 +160,15 @@ local function spawnRequested(player, terminal, vehicleName)
 		return
 	end
 
+	if not terminal:IsDescendantOf(Workspace) then
+		return
+	end
+
 	if not isVehicleTerminal(terminal) then
+		return
+	end
+
+	if not canUseTerminal(player, terminal) then
 		return
 	end
 

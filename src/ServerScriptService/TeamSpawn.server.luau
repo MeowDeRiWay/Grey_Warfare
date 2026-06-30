@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local spawnFolder = workspace:WaitForChild("Spawn")
 
-local lobbyFolder = spawnFolder:WaitForChild("spawn_sky")
+local lobbyFolder = spawnFolder
 
 local blueChoice = lobbyFolder:WaitForChild("BLUE_TEAM_SPAWN_CHOISE")
 local redChoice = lobbyFolder:WaitForChild("RED_TEAM_SPAWN_CHOISE")

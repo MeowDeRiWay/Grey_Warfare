@@ -15,5 +15,6 @@ TerritoryManager.StartLoop()
 
 VehicleTerminalManager.SetupAll()
 VehicleTerminalManager.StartAutoSetup()
+VehicleTerminalManager.StartRemoteListener()
 
 print("[TeamOwnership] Started")

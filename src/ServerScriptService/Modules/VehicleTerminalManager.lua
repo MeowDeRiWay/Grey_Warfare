@@ -1,4 +1,7 @@
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local VehicleSpawner = require(script.Parent.VehicleSpawner)
 
 local VehicleTerminalManager = {}
 
@@ -12,6 +15,14 @@ local function getBaseObjectsFolder()
 	return Workspace:FindFirstChild(BASE_OBJECTS_FOLDER_NAME)
 end
 
+local function getRemotesFolder()
+	return ReplicatedStorage:WaitForChild("Remotes")
+end
+
+local function getSpawnRemote()
+	return getRemotesFolder():WaitForChild("VehicleSpawnRequest")
+end
+
 local function isVehicleTerminal(object)
 	return object:IsA("Model") and object:GetAttribute("ObjectType") == "VehicleTerminal"
 end
@@ -21,6 +32,16 @@ local function getScreen(object)
 
 	if screen and screen:IsA("BasePart") then
 		return screen
+	end
+
+	return nil
+end
+
+local function getWSpawn(object)
+	local spawnPart = object:FindFirstChild("WSpawn", true)
+
+	if spawnPart and spawnPart:IsA("BasePart") then
+		return spawnPart
 	end
 
 	return nil
@@ -54,14 +75,39 @@ local function setupPrompt(object)
 	prompt.Parent = screen
 
 	prompt.Triggered:Connect(function(player)
-		local teamOwner = object:GetAttribute("TeamOwner") or 0
-
 		print("[VehicleTerminal] Open requested by", player.Name)
-		print("[VehicleTerminal] Terminal:", object.Name)
-		print("[VehicleTerminal] TeamOwner:", teamOwner)
-
-		-- Тут потім відкриємо GUI вибору техніки
+		getSpawnRemote():FireClient(player, "OpenMenu", object)
 	end)
+end
+
+local function spawnRequested(player, terminal, vehicleName)
+	if typeof(vehicleName) ~= "string" then
+		return
+	end
+
+	if not terminal or not terminal:IsA("Model") then
+		return
+	end
+
+	if not isVehicleTerminal(terminal) then
+		return
+	end
+
+	if vehicleName ~= "Cargo" then
+		warn("[VehicleTerminalManager] Unknown vehicle requested:", vehicleName)
+		return
+	end
+
+	local spawnPart = getWSpawn(terminal)
+
+	if not spawnPart then
+		warn("[VehicleTerminalManager] WSpawn not found:", terminal:GetFullName())
+		return
+	end
+
+	local teamOwner = terminal:GetAttribute("TeamOwner") or 0
+
+	VehicleSpawner.SpawnVehicle(vehicleName, spawnPart.CFrame, teamOwner)
 end
 
 function VehicleTerminalManager.SetupAll()
@@ -88,6 +134,12 @@ function VehicleTerminalManager.StartAutoSetup()
 	folder.ChildAdded:Connect(function(child)
 		task.wait(0.1)
 		setupPrompt(child)
+	end)
+end
+
+function VehicleTerminalManager.StartRemoteListener()
+	getSpawnRemote().OnServerEvent:Connect(function(player, terminal, vehicleName)
+		spawnRequested(player, terminal, vehicleName)
 	end)
 end
 

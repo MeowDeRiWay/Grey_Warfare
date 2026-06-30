@@ -30,6 +30,20 @@ local function getTeamColorPart(vehicle)
 	return nil
 end
 
+local function getDriverSeat(vehicle)
+	local seat = vehicle:FindFirstChild("Driver_seat", true)
+
+	if seat and seat:IsA("Seat") then
+		return seat
+	end
+
+	if seat and seat:IsA("VehicleSeat") then
+		return seat
+	end
+
+	return nil
+end
+
 local function paintVehicle(vehicle, teamOwner)
 	local colorPart = getTeamColorPart(vehicle)
 
@@ -52,7 +66,63 @@ local function prepareVehicle(vehicle)
 	end
 end
 
-function VehicleSpawner.SpawnVehicle(vehicleName, spawnCFrame, teamOwner)
+local function protectDriverSeat(vehicle)
+	local driverSeat = getDriverSeat(vehicle)
+
+	if not driverSeat then
+		warn("[VehicleSpawner] Driver_seat not found or is not Seat/VehicleSeat:", vehicle.Name)
+		return
+	end
+
+	driverSeat:GetPropertyChangedSignal("Occupant"):Connect(function()
+		local humanoid = driverSeat.Occupant
+
+		if not humanoid then
+			return
+		end
+
+		local character = humanoid.Parent
+		local player = game.Players:GetPlayerFromCharacter(character)
+
+		if not player then
+			humanoid.Sit = false
+			return
+		end
+
+		local ownerUserId = vehicle:GetAttribute("OwnerUserId")
+
+		if ownerUserId ~= player.UserId then
+			print("[VehicleSpawner] Seat access denied:", player.Name, "tried to steal", vehicle.Name)
+			humanoid.Sit = false
+			return
+		end
+
+		print("my_summer_car")
+	end)
+end
+
+local function seatOwner(player, vehicle)
+	local driverSeat = getDriverSeat(vehicle)
+
+	if not driverSeat then
+		return
+	end
+
+	local character = player.Character
+	if not character then
+		return
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		return
+	end
+
+	task.wait(0.15)
+	driverSeat:Sit(humanoid)
+end
+
+function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner)
 	local vehiclesFolder = ReplicatedStorage:WaitForChild(VEHICLES_FOLDER_NAME)
 	local template = vehiclesFolder:FindFirstChild(vehicleName)
 
@@ -65,6 +135,8 @@ function VehicleSpawner.SpawnVehicle(vehicleName, spawnCFrame, teamOwner)
 	vehicle.Name = vehicleName .. "_" .. tostring(os.time())
 
 	vehicle:SetAttribute("TeamOwner", teamOwner or 0)
+	vehicle:SetAttribute("OwnerUserId", player.UserId)
+	vehicle:SetAttribute("OwnerName", player.Name)
 
 	local maxHealth = vehicle:GetAttribute("Max_health")
 	if maxHealth and vehicle:GetAttribute("Current_health") == 0 then
@@ -80,17 +152,19 @@ function VehicleSpawner.SpawnVehicle(vehicleName, spawnCFrame, teamOwner)
 	vehicle.Parent = getActiveVehiclesFolder()
 
 	if vehicle.PrimaryPart then
-	local vehicleSize = vehicle:GetExtentsSize()
-	local spawnOffsetY = (vehicleSize.Y / 2) + 0.2
+		local vehicleSize = vehicle:GetExtentsSize()
+		local spawnOffsetY = (vehicleSize.Y / 2) + 0.2
 
-	vehicle:PivotTo(spawnCFrame + Vector3.new(0, spawnOffsetY, 0))
+		vehicle:PivotTo(spawnCFrame + Vector3.new(0, spawnOffsetY, 0))
 	else
-	warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
+		warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
 	end
 
 	paintVehicle(vehicle, teamOwner or 0)
+	protectDriverSeat(vehicle)
+	seatOwner(player, vehicle)
 
-	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "TeamOwner:", teamOwner)
+	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Owner:", player.Name, "TeamOwner:", teamOwner)
 
 	return vehicle
 end

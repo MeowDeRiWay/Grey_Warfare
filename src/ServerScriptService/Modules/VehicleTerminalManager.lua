@@ -107,7 +107,7 @@ local function spawnRequested(player, terminal, vehicleName)
 
 	local teamOwner = terminal:GetAttribute("TeamOwner") or 0
 
-	VehicleSpawner.SpawnVehicle(vehicleName, spawnPart.CFrame, teamOwner)
+	VehicleSpawner.SpawnVehicle(player, vehicleName, spawnPart.CFrame, teamOwner)
 end
 
 function VehicleTerminalManager.SetupAll()

@@ -2,8 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local spawnFolder = workspace:WaitForChild("Spawn")
-
-local lobbyFolder = spawnFolder
+local lobbyFolder = spawnFolder:WaitForChild("spawn_sky")
 
 local blueChoice = lobbyFolder:WaitForChild("BLUE_TEAM_SPAWN_CHOISE")
 local redChoice = lobbyFolder:WaitForChild("RED_TEAM_SPAWN_CHOISE")
@@ -11,8 +10,7 @@ local redChoice = lobbyFolder:WaitForChild("RED_TEAM_SPAWN_CHOISE")
 local blueSpawn = spawnFolder:WaitForChild("BLUE_TEAM_START"):WaitForChild("BLUE_MAIN_SPAWN")
 local redSpawn = spawnFolder:WaitForChild("RED_TEAM_START"):WaitForChild("RED_MAIN_SPAWN")
 
-local charactersFolder = ReplicatedStorage:WaitForChild("Characters")
-local soldierTemplate = charactersFolder:WaitForChild("Soldier")
+local soldierTemplate = ReplicatedStorage:WaitForChild("Characters"):WaitForChild("Soldier")
 
 local TEAM_DATA = {
 	Blue = {
@@ -40,115 +38,94 @@ local function getPlayerFromTouchedPart(hit: BasePart)
 	return Players:GetPlayerFromCharacter(character)
 end
 
-local function clearOldSoldierSkin(character: Model)
-	local oldSkin = character:FindFirstChild("SoldierSkin")
-	if oldSkin then
-		oldSkin:Destroy()
-	end
-end
-
-local function hideDefaultCharacter(character: Model)
-	for _, obj in ipairs(character:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			if obj.Name ~= "HumanoidRootPart" then
-				obj.Transparency = 1
-			end
-		elseif obj:IsA("Decal") then
-			obj.Transparency = 1
-		end
-	end
-end
-
-local function weldPart(part: BasePart, root: BasePart)
-	part.Anchored = false
-	part.CanCollide = false
-	part.Massless = true
-
-	local weld = Instance.new("WeldConstraint")
-	weld.Part0 = root
-	weld.Part1 = part
-	weld.Parent = part
-end
-
-local function applySoldierSkin(player: Player, teamName: string)
+local function prepareSoldierModel(soldier: Model, teamName: string)
 	local data = TEAM_DATA[teamName]
 	if not data then
-		return
+		return false
 	end
 
-	local character = player.Character
-	if not character then
-		return
+	local humanoid = soldier:FindFirstChildOfClass("Humanoid")
+	local root = soldier:FindFirstChild("HumanoidRootPart")
+	local body = soldier:FindFirstChild("Body")
+	local helmet = soldier:FindFirstChild("Helmet")
+
+	if not humanoid then
+		warn("Soldier has no Humanoid")
+		return false
 	end
 
-	local root = character:FindFirstChild("HumanoidRootPart")
 	if not root or not root:IsA("BasePart") then
-		warn("Character has no HumanoidRootPart")
-		return
+		warn("Soldier has no HumanoidRootPart")
+		return false
 	end
-
-	clearOldSoldierSkin(character)
-	hideDefaultCharacter(character)
-
-	local skin = soldierTemplate:Clone()
-	skin.Name = "SoldierSkin"
-	skin.Parent = character
-
-	local body = skin:FindFirstChild("Body", true)
-	local helmet = skin:FindFirstChild("Helmet", true)
 
 	if not body or not body:IsA("BasePart") then
-		warn("Soldier model has no Body part")
-		return
+		warn("Soldier has no Body")
+		return false
 	end
 
 	if not helmet or not helmet:IsA("BasePart") then
-		warn("Soldier model has no Helmet part")
-		return
+		warn("Soldier has no Helmet")
+		return false
 	end
 
-	body.Size = Vector3.new(0.5, 1.8, 1)
-	helmet.Size = Vector3.new(0.55, 0.35, 1.05)
+	soldier.PrimaryPart = root
 
+	root.Name = "HumanoidRootPart"
+	root.Transparency = 1
+	root.CanCollide = false
+	root.Anchored = false
+
+	body.Anchored = false
+	body.CanCollide = false
+	body.Massless = true
 	body.Color = Color3.fromRGB(90, 90, 90)
+
+	helmet.Anchored = false
+	helmet.CanCollide = false
+	helmet.Massless = true
 	helmet.Color = data.color
 
-	body.CFrame = root.CFrame
-	helmet.CFrame = root.CFrame * CFrame.new(0, 1.1, 0)
+	for _, part in ipairs(soldier:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+		end
+	end
 
-	weldPart(body, root)
-	weldPart(helmet, root)
+	return true
 end
 
-local function teleportPlayer(player: Player, teamName: string)
+local function spawnSoldierForPlayer(player: Player, teamName: string)
 	local data = TEAM_DATA[teamName]
 	if not data then
 		return
 	end
 
-	local character = player.Character
-	if not character then
+	local oldCharacter = player.Character
+
+	local soldier = soldierTemplate:Clone()
+	soldier.Name = player.Name
+
+	if not prepareSoldierModel(soldier, teamName) then
+		soldier:Destroy()
 		return
 	end
 
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not root or not root:IsA("BasePart") then
-		return
-	end
+	soldier.Parent = workspace
+	player.Character = soldier
 
-	root.CFrame = data.spawn.CFrame + Vector3.new(0, 3, 0)
+	soldier:PivotTo(data.spawn.CFrame + Vector3.new(0, 3, 0))
+
+	if oldCharacter and oldCharacter ~= soldier then
+		oldCharacter:Destroy()
+	end
 end
 
 local function selectTeam(player: Player, teamName: string)
-	if player:GetAttribute("TeamSelected") then
-		return
-	end
-
 	player:SetAttribute("TeamSelected", true)
 	player:SetAttribute("TeamName", teamName)
 
-	applySoldierSkin(player, teamName)
-	teleportPlayer(player, teamName)
+	spawnSoldierForPlayer(player, teamName)
 end
 
 blueChoice.Touched:Connect(function(hit)
@@ -168,4 +145,13 @@ end)
 Players.PlayerAdded:Connect(function(player)
 	player:SetAttribute("TeamSelected", false)
 	player:SetAttribute("TeamName", "")
+
+	player.CharacterAdded:Connect(function()
+		task.wait(0.2)
+
+		local teamName = player:GetAttribute("TeamName")
+		if teamName == "Blue" or teamName == "Red" then
+			spawnSoldierForPlayer(player, teamName)
+		end
+	end)
 end)

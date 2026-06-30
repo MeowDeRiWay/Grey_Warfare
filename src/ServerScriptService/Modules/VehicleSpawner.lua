@@ -80,9 +80,12 @@ function VehicleSpawner.SpawnVehicle(vehicleName, spawnCFrame, teamOwner)
 	vehicle.Parent = getActiveVehiclesFolder()
 
 	if vehicle.PrimaryPart then
-		vehicle:PivotTo(spawnCFrame)
+	local vehicleSize = vehicle:GetExtentsSize()
+	local spawnOffsetY = (vehicleSize.Y / 2) + 0.2
+
+	vehicle:PivotTo(spawnCFrame + Vector3.new(0, spawnOffsetY, 0))
 	else
-		warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
+	warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
 	end
 
 	paintVehicle(vehicle, teamOwner or 0)

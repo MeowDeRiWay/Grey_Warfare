@@ -13,6 +13,8 @@ local DEFAULT_FALL_SPEED = 18
 local LANDING_RAY_DISTANCE = 4
 local LANDING_GAP = 0.08
 local SPAWN_GRACE_TIME = 0.45
+local COLLISION_PADDING = 0.15
+local MIN_CAST_DISTANCE = 0.02
 
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
@@ -76,19 +78,56 @@ local function hasDriver(seat)
 	return seat and seat.Occupant ~= nil
 end
 
-local function buildRaycastParams(vehicle)
+local function buildRaycastParams(vehicle, ownerPlayer)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
+
+	local excluded = { vehicle }
+	if ownerPlayer and ownerPlayer.Character then
+		table.insert(excluded, ownerPlayer.Character)
+	end
+
+	params.FilterDescendantsInstances = excluded
 	params.IgnoreWater = true
 	return params
 end
 
-local function getLandingHit(vehicle, landingPart, extraDistance)
+local function getLandingHit(vehicle, landingPart, extraDistance, ownerPlayer)
 	local distance = extraDistance or LANDING_RAY_DISTANCE
 	local origin = landingPart.Position
 	local direction = Vector3.new(0, -distance, 0)
-	return workspace:Raycast(origin, direction, buildRaycastParams(vehicle))
+	return workspace:Raycast(origin, direction, buildRaycastParams(vehicle, ownerPlayer))
+end
+
+local function getCollisionBoxSize(vehicle)
+	local size = vehicle:GetExtentsSize()
+	return Vector3.new(
+		math.max(0.5, size.X - COLLISION_PADDING),
+		math.max(0.5, size.Y - COLLISION_PADDING),
+		math.max(0.5, size.Z - COLLISION_PADDING)
+	)
+end
+
+local function castMove(vehicle, main, ownerPlayer, fromPos, yaw, displacement)
+	if displacement.Magnitude < MIN_CAST_DISTANCE then
+		return fromPos, false
+	end
+
+	local boxCFrame = CFrame.new(fromPos) * CFrame.Angles(0, yaw, 0)
+	local hit = workspace:Blockcast(
+		boxCFrame,
+		getCollisionBoxSize(vehicle),
+		displacement,
+		buildRaycastParams(vehicle, ownerPlayer)
+	)
+
+	if not hit then
+		return fromPos + displacement, false
+	end
+
+	local safeDistance = math.max(0, hit.Distance - 0.08)
+	local safePos = fromPos + displacement.Unit * safeDistance
+	return safePos, true, hit
 end
 
 local function getLandingOffset(main, landingPart)
@@ -214,7 +253,7 @@ RunService.Heartbeat:Connect(function(dt)
 				continue
 			end
 
-			local hit = getLandingHit(vehicle, landingPart, math.max(LANDING_RAY_DISTANCE, fallSpeed * dt + 2))
+			local hit = getLandingHit(vehicle, landingPart, math.max(LANDING_RAY_DISTANCE, fallSpeed * dt + 2), owner)
 
 			if hit then
 				local gap = landingPart.Position.Y - pos.Y
@@ -275,21 +314,45 @@ RunService.Heartbeat:Connect(function(dt)
 			flatLook = flatLook.Unit
 		end
 
-		local newY = data.HoverY
+		local verticalMove = 0
 		if liftInput ~= 0 then
-			newY += liftSpeed * liftInput * dt
+			verticalMove = liftSpeed * liftInput * dt
 		end
 
-		local move = flatLook * data.CurrentSpeed * dt
-		local newPos = Vector3.new(pos.X + move.X, newY, pos.Z + move.Z)
+		local horizontalMove = flatLook * data.CurrentSpeed * dt
+		local desiredMove = Vector3.new(horizontalMove.X, verticalMove, horizontalMove.Z)
+		local newPos, blocked, hit = castMove(vehicle, main, owner, pos, data.Yaw, desiredMove)
 
-		if data.IsLanded then
+		if blocked then
+			-- Аркада: врізався — просто зупинився, без вибуху фізики.
+			data.CurrentSpeed = 0
+
+			-- Якщо вперлись знизу в землю/платформу, вважаємо це нормальною посадкою.
+			if hit and hit.Normal.Y > 0.45 then
+				data.IsLanded = true
+			else
+				data.IsLanded = false
+			end
+		else
 			data.IsLanded = false
-			newPos = Vector3.new(pos.X, pos.Y + 0.05, pos.Z)
-			newY = newPos.Y
 		end
 
-		data.HoverY = newY
+		-- Додаткова перевірка посадки при спуску X: не даємо пройти крізь землю навіть тонким хітбоксом.
+		if liftInput < 0 then
+			alignLandingPart(main, landingPart, landingOffset)
+			local landingHit = getLandingHit(vehicle, landingPart, math.max(LANDING_RAY_DISTANCE, math.abs(verticalMove) + 2), owner)
+			if landingHit then
+				local gap = landingPart.Position.Y - pos.Y
+				local targetMainY = landingHit.Position.Y - gap + LANDING_GAP
+				if newPos.Y <= targetMainY then
+					newPos = Vector3.new(newPos.X, targetMainY, newPos.Z)
+					data.CurrentSpeed = 0
+					data.IsLanded = true
+				end
+			end
+		end
+
+		data.HoverY = newPos.Y
 		pivotKeepingYaw(vehicle, main, landingPart, landingOffset, newPos, data.Yaw)
 
 		if maxFuel > 0 and currentFuel > 0 then

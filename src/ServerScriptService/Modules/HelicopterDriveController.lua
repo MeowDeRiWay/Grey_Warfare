@@ -92,6 +92,44 @@ local function buildRaycastParams(vehicle, ownerPlayer)
 	return params
 end
 
+
+local function buildOverlapParams(vehicle, ownerPlayer)
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+
+	local excluded = { vehicle }
+	if ownerPlayer and ownerPlayer.Character then
+		table.insert(excluded, ownerPlayer.Character)
+	end
+
+	params.FilterDescendantsInstances = excluded
+	params.MaxParts = 30
+	params.RespectCanCollide = true
+	return params
+end
+
+local function getWallCollisionBoxSize(vehicle)
+	-- Для польоту нам важлива ширина/довжина гелікоптера, але не треба чіпляти підлогу
+	-- всім високим ExtentsSize. Посадку окремо контролює Ground_level.
+	local size = vehicle:GetExtentsSize()
+	return Vector3.new(
+		math.max(0.5, size.X - COLLISION_PADDING),
+		math.max(0.5, math.min(size.Y - COLLISION_PADDING, 2)),
+		math.max(0.5, size.Z - COLLISION_PADDING)
+	)
+end
+
+local function isBoxClear(vehicle, ownerPlayer, position, yaw)
+	local boxCFrame = CFrame.new(position) * CFrame.Angles(0, yaw, 0)
+	local touching = workspace:GetPartBoundsInBox(
+		boxCFrame,
+		getWallCollisionBoxSize(vehicle),
+		buildOverlapParams(vehicle, ownerPlayer)
+	)
+
+	return #touching == 0
+end
+
 local function getLandingHit(vehicle, landingPart, extraDistance, ownerPlayer)
 	local distance = extraDistance or LANDING_RAY_DISTANCE
 	local origin = landingPart.Position
@@ -100,12 +138,7 @@ local function getLandingHit(vehicle, landingPart, extraDistance, ownerPlayer)
 end
 
 local function getCollisionBoxSize(vehicle)
-	local size = vehicle:GetExtentsSize()
-	return Vector3.new(
-		math.max(0.5, size.X - COLLISION_PADDING),
-		math.max(0.5, size.Y - COLLISION_PADDING),
-		math.max(0.5, size.Z - COLLISION_PADDING)
-	)
+	return getWallCollisionBoxSize(vehicle)
 end
 
 local function castMove(vehicle, main, ownerPlayer, fromPos, yaw, displacement)
@@ -200,7 +233,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		SpawnGraceLeft = SPAWN_GRACE_TIME,
 	}
 
-	print("[HelicopterDriveController] SAFE ZX arcade helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] SIDE SAFE arcade helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -304,7 +337,16 @@ RunService.Heartbeat:Connect(function(dt)
 		local speedStep = acceleration * dt
 		data.CurrentSpeed += math.clamp(targetSpeed - data.CurrentSpeed, -speedStep, speedStep)
 
-		data.Yaw += (-steer * turnSpeed * dt)
+		local oldYaw = data.Yaw
+		local wantedYaw = data.Yaw + (-steer * turnSpeed * dt)
+
+		-- Якщо просто поворотом широкий гелік залазить боком у стіну — поворот блокуємо.
+		if isBoxClear(vehicle, owner, pos, wantedYaw) then
+			data.Yaw = wantedYaw
+		else
+			data.Yaw = oldYaw
+			steer = 0
+		end
 
 		local look = (CFrame.Angles(0, data.Yaw, 0)).LookVector
 		local flatLook = Vector3.new(look.X, 0, look.Z)
@@ -322,6 +364,13 @@ RunService.Heartbeat:Connect(function(dt)
 		local horizontalMove = flatLook * data.CurrentSpeed * dt
 		local desiredMove = Vector3.new(horizontalMove.X, verticalMove, horizontalMove.Z)
 		local newPos, blocked, hit = castMove(vehicle, main, owner, pos, data.Yaw, desiredMove)
+
+		-- Blockcast ловить рух "лобом", а ця перевірка ловить випадок,
+		-- коли широкий гелік боком/кутом уже залазить у стіну після PivotTo.
+		if not blocked and not isBoxClear(vehicle, owner, newPos, data.Yaw) then
+			newPos = pos
+			blocked = true
+		end
 
 		if blocked then
 			-- Аркада: врізався — просто зупинився, без вибуху фізики.

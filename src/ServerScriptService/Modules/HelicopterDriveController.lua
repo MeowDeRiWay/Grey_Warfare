@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 
 local HelicopterDriveController = {}
 
@@ -69,6 +70,121 @@ local function getOccupantPlayer(seat)
 		return nil
 	end
 	return Players:GetPlayerFromCharacter(humanoid.Parent)
+end
+
+local function restoreCharacterVisible(character)
+	if not character then
+		return
+	end
+
+	for _, item in ipairs(character:GetDescendants()) do
+		if item:IsA("BasePart") then
+			pcall(function()
+				item.LocalTransparencyModifier = 0
+			end)
+		elseif item:IsA("Decal") then
+			if item.Name ~= "face" then
+				-- не чіпаємо системні штуки зайвий раз
+			end
+		end
+	end
+end
+
+local function getHumanoid(player)
+	local character = player.Character
+	if not character then
+		return nil, nil
+	end
+
+	return character:FindFirstChildOfClass("Humanoid"), character
+end
+
+local function ejectPlayerFromHelicopter(data, player)
+	local humanoid, character = getHumanoid(player)
+	if not humanoid or not character then
+		return
+	end
+
+	humanoid.Sit = false
+	humanoid.Jump = true
+	restoreCharacterVisible(character)
+
+	local ground = data.Ground
+	local main = data.Main
+	local exitHeight = getNumberAttr(data.Vehicle, "Exit_height", 3)
+	local exitSide = getNumberAttr(data.Vehicle, "Exit_side_offset", 4)
+
+	local baseCFrame = ground and ground.CFrame or main.CFrame
+	local sideOffset = ground and (ground.Size.X / 2 + exitSide) or exitSide
+	local exitCFrame = baseCFrame * CFrame.new(sideOffset, exitHeight, 0)
+
+	if character.PrimaryPart then
+		character:PivotTo(exitCFrame)
+	end
+end
+
+local function canPlayerEnter(vehicle, player)
+	local ownerUserId = tonumber(vehicle:GetAttribute("OwnerUserId"))
+	if ownerUserId and ownerUserId ~= player.UserId then
+		return false
+	end
+
+	return true
+end
+
+local function setupEnterPrompt(vehicle, data)
+	local main = data.Main
+	if not main then
+		return
+	end
+
+	local oldPrompt = main:FindFirstChild("HelicopterEnterPrompt")
+	if oldPrompt then
+		oldPrompt:Destroy()
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "HelicopterEnterPrompt"
+	prompt.ActionText = "Enter / Exit"
+	prompt.ObjectText = vehicle.Name
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = getNumberAttr(vehicle, "Enter_distance", 10)
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = main
+
+	prompt.Triggered:Connect(function(player)
+		if not vehicle.Parent then
+			return
+		end
+
+		if not canPlayerEnter(vehicle, player) then
+			return
+		end
+
+		local humanoid, character = getHumanoid(player)
+		if not humanoid or not character then
+			return
+		end
+
+		local seat = data.Seat
+		if not seat or not seat.Parent then
+			return
+		end
+
+		local occupantPlayer = getOccupantPlayer(seat)
+		if occupantPlayer == player then
+			ejectPlayerFromHelicopter(data, player)
+			return
+		end
+
+		if seat.Occupant then
+			return
+		end
+
+		seat:Sit(humanoid)
+		restoreCharacterVisible(character)
+	end)
 end
 
 local function anchorAll(vehicle)
@@ -150,10 +266,27 @@ local function isGrounded(vehicle, groundPart, ownerPlayer)
 	end
 
 	local rayParams = makeRayParams(vehicle, ownerPlayer)
-	local downDistance = 0.35
-	local origin = groundPart.Position
-	local result = workspace:Raycast(origin, Vector3.new(0, -(groundPart.Size.Y / 2 + downDistance), 0), rayParams)
-	return result ~= nil
+	local downDistance = 0.45
+	local size = groundPart.Size
+	local cf = groundPart.CFrame
+
+	local offsets = {
+		Vector3.new(0, 0, 0),
+		Vector3.new(size.X * 0.42, 0, size.Z * 0.42),
+		Vector3.new(-size.X * 0.42, 0, size.Z * 0.42),
+		Vector3.new(size.X * 0.42, 0, -size.Z * 0.42),
+		Vector3.new(-size.X * 0.42, 0, -size.Z * 0.42),
+	}
+
+	for _, offset in ipairs(offsets) do
+		local origin = (cf * CFrame.new(offset)).Position
+		local result = workspace:Raycast(origin, Vector3.new(0, -(size.Y / 2 + downDistance), 0), rayParams)
+		if result then
+			return true
+		end
+	end
+
+	return false
 end
 
 local function getMainTargetCFrame(data, position, yaw, pitch, roll)
@@ -222,7 +355,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	local pivot = vehicle:GetPivot()
 	local _, yaw, _ = main.CFrame:ToOrientation()
 
-	activeHelicopters[vehicle] = {
+	local data = {
 		Vehicle = vehicle,
 		Main = main,
 		Seat = seat,
@@ -244,7 +377,10 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		CurrentTurn = 0,
 	}
 
-	print("[HelicopterDriveController] CENTER TURN FUEL helicopter registered:", vehicle.Name)
+	activeHelicopters[vehicle] = data
+	setupEnterPrompt(vehicle, data)
+
+	print("[HelicopterDriveController] CENTER TURN E/FUEL helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -285,6 +421,8 @@ RunService.Heartbeat:Connect(function(dt)
 		local maxPitchAngle = getNumberAttr(vehicle, "Max_pitch_angle", 12)
 		local maxRollAngle = getNumberAttr(vehicle, "Max_roll_angle", 10)
 		local tiltSmooth = getNumberAttr(vehicle, "Tilt_smooth", 6)
+		local pitchSmooth = getNumberAttr(vehicle, "Pitch_smooth", tiltSmooth)
+		local rollSmooth = getNumberAttr(vehicle, "Roll_smooth", tiltSmooth)
 		local rotorIdleSpeed = getNumberAttr(vehicle, "Rotor_idle_speed", 300)
 		local rotorFlightSpeed = getNumberAttr(vehicle, "Rotor_flight_speed", 1500)
 		local rotorSmooth = getNumberAttr(vehicle, "Rotor_smooth", 8)
@@ -296,6 +434,7 @@ RunService.Heartbeat:Connect(function(dt)
 		local moveForwardSign = getNumberAttr(vehicle, "Move_forward_sign", -1)
 		local sideMoveSign = getNumberAttr(vehicle, "Side_move_sign", -1)
 		local controlYawOffset = math.rad(getNumberAttr(vehicle, "Control_yaw_offset", -90))
+		local groundedNow = isGrounded(vehicle, data.Ground, owner)
 
 		local throttle = 0
 		local steer = 0
@@ -318,8 +457,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local targetRoll = -steer * maxRollAngle * visualRollSign
 
-		data.Pitch = approach(data.Pitch, targetPitch, maxPitchAngle * tiltSmooth, dt)
-		data.Roll = approach(data.Roll, targetRoll, maxRollAngle * tiltSmooth, dt)
+		data.Pitch = approach(data.Pitch, targetPitch, maxPitchAngle * pitchSmooth, dt)
+		data.Roll = approach(data.Roll, targetRoll, maxRollAngle * rollSmooth, dt)
 
 		local pitchRatio = math.clamp((-data.Pitch * visualPitchSign) / maxPitchAngle, -1, 1)
 		local rollRatio = math.clamp((-data.Roll * visualRollSign) / maxRollAngle, -1, 1)
@@ -344,11 +483,15 @@ RunService.Heartbeat:Connect(function(dt)
 				targetVerticalSpeed = liftInput * descendSpeed
 			end
 		else
-			if isGrounded(vehicle, data.Ground, owner) then
+			if groundedNow then
 				targetVerticalSpeed = 0
 			else
 				targetVerticalSpeed = -fallSpeed
 			end
+		end
+
+		if groundedNow and targetVerticalSpeed < 0 then
+			targetVerticalSpeed = 0
 		end
 
 		data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, math.max(liftSpeed, descendSpeed, fallSpeed) * 4, dt)
@@ -363,6 +506,10 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local currentCenterPosition = data.Ground and data.Ground.Position or main.Position
 		local wantedMove = (forward * data.ForwardSpeed + right * data.SideSpeed + Vector3.new(0, data.VerticalSpeed, 0)) * dt
+		if groundedNow and wantedMove.Y < 0 then
+			wantedMove = Vector3.new(wantedMove.X, 0, wantedMove.Z)
+			data.VerticalSpeed = 0
+		end
 		local wantedCenterPosition = currentCenterPosition + wantedMove
 
 		local targetMainCFrame = getMainCFrameForCenter(data, wantedCenterPosition, data.Yaw, data.Pitch, data.Roll)
@@ -385,6 +532,10 @@ RunService.Heartbeat:Connect(function(dt)
 			local stopMainCFrame = getMainCFrameForCenter(data, currentCenterPosition, data.Yaw, data.Pitch, data.Roll)
 			pivotVehicleToMain(data, stopMainCFrame)
 		end
+
+		local displaySpeed = math.sqrt(data.ForwardSpeed * data.ForwardSpeed + data.SideSpeed * data.SideSpeed + data.VerticalSpeed * data.VerticalSpeed)
+		vehicle:SetAttribute("Current_speed", displaySpeed)
+		vehicle:SetAttribute("Is_grounded", groundedNow)
 
 		if hasControl and maxFuel > 0 and fuelPerSecond > 0 then
 			vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))

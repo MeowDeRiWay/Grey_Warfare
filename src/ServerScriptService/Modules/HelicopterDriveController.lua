@@ -172,10 +172,23 @@ local function getMainTargetCFrame(data, position, yaw, pitch, roll)
 		* CFrame.Angles(math.rad(roll), 0, math.rad(pitch))
 end
 
+local function getMainCFrameForCenter(data, centerPosition, yaw, pitch, roll)
+	local orientationOnly = getMainTargetCFrame(data, Vector3.new(0, 0, 0), yaw, pitch, roll)
+
+	if not data.Ground then
+		return getMainTargetCFrame(data, centerPosition, yaw, pitch, roll)
+	end
+
+	-- Точка обертання = центр Ground_level.
+	-- Так гелік не описує коло навколо кривого Pivot/PrimaryPart,
+	-- а повертається навколо власного посадкового куба.
+	local groundOffsetFromMain = (orientationOnly * data.MainToGround).Position
+	local mainPosition = centerPosition - groundOffsetFromMain
+
+	return getMainTargetCFrame(data, mainPosition, yaw, pitch, roll)
+end
+
 local function pivotVehicleToMain(data, targetMainCFrame)
-	-- Не використовуємо Model:PivotTo, бо якщо Pivot моделі далеко від Main,
-	-- гелік починає ніби обертатися навколо точки десь попереду.
-	-- SetPrimaryPartCFrame ставить саме Main у потрібний CFrame.
 	data.Vehicle:SetPrimaryPartCFrame(targetMainCFrame)
 end
 
@@ -230,7 +243,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RotorSpeed = 0,
 	}
 
-	print("[HelicopterDriveController] AXIS SWAP + side-fixed helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] CENTER TURN helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -342,11 +355,11 @@ RunService.Heartbeat:Connect(function(dt)
 		local forward = CFrame.Angles(0, controlYaw, 0).LookVector * moveForwardSign
 		local right = CFrame.Angles(0, controlYaw, 0).RightVector * sideMoveSign
 
-		local currentPosition = main.Position
+		local currentCenterPosition = data.Ground and data.Ground.Position or main.Position
 		local wantedMove = (forward * data.ForwardSpeed + right * data.SideSpeed + Vector3.new(0, data.VerticalSpeed, 0)) * dt
-		local wantedPosition = currentPosition + wantedMove
+		local wantedCenterPosition = currentCenterPosition + wantedMove
 
-		local targetMainCFrame = getMainTargetCFrame(data, wantedPosition, data.Yaw, data.Pitch, data.Roll)
+		local targetMainCFrame = getMainCFrameForCenter(data, wantedCenterPosition, data.Yaw, data.Pitch, data.Roll)
 
 		local canMove = true
 		if data.Ground then
@@ -363,7 +376,7 @@ RunService.Heartbeat:Connect(function(dt)
 			data.ForwardSpeed = 0
 			data.SideSpeed = 0
 			data.VerticalSpeed = 0
-			local stopMainCFrame = getMainTargetCFrame(data, currentPosition, data.Yaw, data.Pitch, data.Roll)
+			local stopMainCFrame = getMainCFrameForCenter(data, currentCenterPosition, data.Yaw, data.Pitch, data.Roll)
 			pivotVehicleToMain(data, stopMainCFrame)
 		end
 

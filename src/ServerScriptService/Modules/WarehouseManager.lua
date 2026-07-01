@@ -221,7 +221,9 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 end
 
 local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
-	if not sameTeam(vehicle, warehouse) then
+	local warehouseTeam = getTeamOwner(warehouse)
+
+	if warehouseTeam == 0 then
 		return
 	end
 

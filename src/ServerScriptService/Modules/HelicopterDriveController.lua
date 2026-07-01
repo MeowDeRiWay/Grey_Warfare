@@ -161,15 +161,22 @@ local function getMainTargetCFrame(data, position, yaw, pitch, roll)
 	local bodyYawOffset = math.rad(getNumberAttr(data.Vehicle, "Body_yaw_offset", 0))
 	local bodyRollOffset = math.rad(getNumberAttr(data.Vehicle, "Body_roll_offset", 0))
 
+	-- У твоєї поточної моделі локальні осі Main не співпали з носом гелікоптера:
+	-- старий pitch давав крен, а старий roll давав тангаж.
+	-- Тому тут навмисно міняємо їх місцями:
+	--   pitch -> Z
+	--   roll  -> X
 	return CFrame.new(position)
 		* CFrame.Angles(0, yaw, 0)
 		* CFrame.Angles(bodyPitchOffset, bodyYawOffset, bodyRollOffset)
-		* CFrame.Angles(math.rad(pitch), 0, math.rad(roll))
+		* CFrame.Angles(math.rad(roll), 0, math.rad(pitch))
 end
 
 local function pivotVehicleToMain(data, targetMainCFrame)
-	local targetPivot = targetMainCFrame * data.MainToPivot
-	data.Vehicle:PivotTo(targetPivot)
+	-- Не використовуємо Model:PivotTo, бо якщо Pivot моделі далеко від Main,
+	-- гелік починає ніби обертатися навколо точки десь попереду.
+	-- SetPrimaryPartCFrame ставить саме Main у потрібний CFrame.
+	data.Vehicle:SetPrimaryPartCFrame(targetMainCFrame)
 end
 
 helicopterControlRemote.OnServerEvent:Connect(function(player, input)
@@ -223,7 +230,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RotorSpeed = 0,
 	}
 
-	print("[HelicopterDriveController] FINAL tilt helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] AXIS SWAP tilt helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -266,7 +273,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local visualPitchSign = getNumberAttr(vehicle, "Visual_pitch_sign", -1)
 		local visualRollSign = getNumberAttr(vehicle, "Visual_roll_sign", 1)
-		local turnSign = getNumberAttr(vehicle, "Turn_sign", -1)
+		local turnSign = getNumberAttr(vehicle, "Turn_sign", 1)
 		local moveForwardSign = getNumberAttr(vehicle, "Move_forward_sign", -1)
 		local sideMoveSign = getNumberAttr(vehicle, "Side_move_sign", 1)
 		local controlYawOffset = math.rad(getNumberAttr(vehicle, "Control_yaw_offset", -90))

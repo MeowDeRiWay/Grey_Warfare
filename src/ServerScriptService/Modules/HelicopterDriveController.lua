@@ -120,7 +120,7 @@ helicopterControlRemote.OnServerEvent:Connect(function(player, input)
 	end
 
 	playerInput[player] = {
-		Lift = math.clamp(tonumber(input.Lift) or 0, 0, 1),
+		Lift = math.clamp(tonumber(input.Lift) or 0, -1, 1),
 	}
 end)
 
@@ -161,7 +161,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		SpawnGraceLeft = SPAWN_GRACE_TIME,
 	}
 
-	print("[HelicopterDriveController] SAFE arcade helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] SAFE ZX arcade helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -276,7 +276,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local newY = data.HoverY
-		if liftInput > 0 then
+		if liftInput ~= 0 then
 			newY += liftSpeed * liftInput * dt
 		end
 
@@ -293,13 +293,12 @@ RunService.Heartbeat:Connect(function(dt)
 		pivotKeepingYaw(vehicle, main, landingPart, landingOffset, newPos, data.Yaw)
 
 		if maxFuel > 0 and currentFuel > 0 then
-			local moving = math.abs(data.CurrentSpeed) > 1 or liftInput > 0 or math.abs(steer) > 0
+			local moving = math.abs(data.CurrentSpeed) > 1 or math.abs(liftInput) > 0 or math.abs(steer) > 0
 			if moving then
 				vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
 			end
 		end
 	end
 end)
-
 
 return HelicopterDriveController

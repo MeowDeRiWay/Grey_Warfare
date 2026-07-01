@@ -204,14 +204,20 @@ local function alignLandingPart(main, landingPart, landingOffset, yaw)
 	end
 end
 
-local function pivotVisual(vehicle, main, landingPart, landingOffset, position, yaw, pitch, roll, modelPivotOffset, bodyOffset)
+local function pivotVisual(vehicle, main, landingPart, landingOffset, position, yaw, pitch, roll, modelPivotOffset, bodyOffset, visualPitchSign, visualRollSign)
 	-- ВАЖЛИВО:
 	-- PivotTo працює від Pivot моделі, а не від Main.
 	-- Тому спочатку будуємо бажаний CFrame саме для Main,
 	-- а потім переводимо його у CFrame Pivot моделі через збережений офсет.
+	-- У цієї моделі локальні осі Main повернуті відносно візуального корпусу.
+	-- Тому тангаж/крен свідомо міняємо місцями:
+	-- pitch -> Z, roll -> X. Знаки винесені в атрибути моделі.
+	local pitchSign = visualPitchSign or -1
+	local rollSign = visualRollSign or 1
+
 	local desiredMainCFrame = CFrame.new(position)
 		* CFrame.Angles(0, yaw, 0)
-		* CFrame.Angles(math.rad(pitch), 0, math.rad(roll))
+		* CFrame.Angles(math.rad(roll * rollSign), 0, math.rad(pitch * pitchSign))
 		* (bodyOffset or CFrame.new())
 
 	vehicle:PivotTo(desiredMainCFrame * (modelPivotOffset or CFrame.new()))
@@ -325,6 +331,13 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		TailRotorAxis = tostring(getAttr(vehicle, "TailRotor_axis", getAttr(tailRotor or vehicle, "Rotor_axis", "Z"))),
 		MainRotorSign = getNumberAttr(vehicle, "MainRotor_axis_sign", 1),
 		TailRotorSign = getNumberAttr(vehicle, "TailRotor_axis_sign", 1),
+
+		-- Для моделей, де Main розвернутий не так, як візуальний ніс гелікоптера.
+		-- Якщо W летить не вперед — крути Control_yaw_offset: -90 / 0 / 90 / 180.
+		ControlYawOffset = math.rad(getNumberAttr(vehicle, "Control_yaw_offset", -90)),
+		VisualPitchSign = getNumberAttr(vehicle, "Visual_pitch_sign", -1),
+		VisualRollSign = getNumberAttr(vehicle, "Visual_roll_sign", 1),
+		TurnSign = getNumberAttr(vehicle, "Turn_sign", -1),
 		Owner = ownerPlayer,
 
 		Yaw = yaw,
@@ -389,7 +402,7 @@ RunService.Heartbeat:Connect(function(dt)
 			if data.SpawnGraceLeft and data.SpawnGraceLeft > 0 then
 				data.SpawnGraceLeft -= dt
 				data.HoverY = pos.Y
-				pivotVisual(vehicle, main, landingPart, landingOffset, pos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, pos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset, data.VisualPitchSign, data.VisualRollSign)
 				continue
 			end
 
@@ -400,12 +413,12 @@ RunService.Heartbeat:Connect(function(dt)
 				local targetMainY = hit.Position.Y - gap + LANDING_GAP
 				local newPos = Vector3.new(pos.X, targetMainY, pos.Z)
 
-				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset, data.VisualPitchSign, data.VisualRollSign)
 				data.HoverY = newPos.Y
 				data.IsLanded = true
 			else
 				local newPos = pos - Vector3.new(0, fallSpeed * dt, 0)
-				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset, data.VisualPitchSign, data.VisualRollSign)
 				data.HoverY = newPos.Y
 				data.IsLanded = false
 			end
@@ -465,7 +478,7 @@ RunService.Heartbeat:Connect(function(dt)
 			forwardSpeed = pitchRatio * reverseSpeed
 		end
 
-		local targetTurnSpeed = rollRatio * turnSpeed
+		local targetTurnSpeed = rollRatio * turnSpeed * (data.TurnSign or -1)
 		data.CurrentTurnSpeed = approach(data.CurrentTurnSpeed or 0, targetTurnSpeed, turnAcceleration, dt)
 
 		local oldYaw = data.Yaw
@@ -479,7 +492,8 @@ RunService.Heartbeat:Connect(function(dt)
 			data.Roll = 0
 		end
 
-		local look = (CFrame.Angles(0, data.Yaw, 0)).LookVector
+		local movementYaw = data.Yaw + (data.ControlYawOffset or 0)
+		local look = (CFrame.Angles(0, movementYaw, 0)).LookVector
 		local flatLook = Vector3.new(look.X, 0, look.Z)
 		if flatLook.Magnitude < 0.1 then
 			flatLook = Vector3.zAxis
@@ -538,7 +552,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local isMoving = math.abs(forwardSpeed) > 1 or math.abs(verticalSpeed) > 0 or math.abs(data.CurrentTurnSpeed or 0) > 0.05
 		data.HoverY = newPos.Y
-		pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
+		pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset, data.VisualPitchSign, data.VisualRollSign)
 		updateRotors(vehicle, data, dt, true, isMoving)
 
 		if maxFuel > 0 and currentFuel > 0 then

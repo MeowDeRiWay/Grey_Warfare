@@ -33,31 +33,13 @@ local function getMain(vehicle)
 	return nil
 end
 
-local function canMoveTo(vehicle, targetCFrame)
-	local size = vehicle:GetExtentsSize() * 0.95
-
-	local params = OverlapParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
-
-	local parts = workspace:GetPartBoundsInBox(targetCFrame, size, params)
-
-	for _, part in ipairs(parts) do
-		if part.CanCollide then
-			return false
-		end
-	end
-
-	return true
-end
-
 helicopterControlRemote.OnServerEvent:Connect(function(player, input)
 	if typeof(input) ~= "table" then
 		return
 	end
 
 	playerInput[player] = {
-		Lift = tonumber(input.Lift) or 0,
+		Lift = math.clamp(tonumber(input.Lift) or 0, -1, 1),
 	}
 end)
 
@@ -75,28 +57,29 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		return
 	end
 
-	main:SetNetworkOwner(nil)
-	main.Anchored = true
+	for _, item in ipairs(vehicle:GetDescendants()) do
+		if item:IsA("BasePart") then
+			item.Anchored = false
+			item.CanCollide = true
+		end
+	end
+
+	main:SetNetworkOwner(ownerPlayer)
 
 	activeHelicopters[vehicle] = {
 		Main = main,
 		Seat = seat,
 		Owner = ownerPlayer,
 
-		Yaw = main.Orientation.Y,
-		Velocity = Vector3.zero,
+		CurrentSpeed = 0,
+		CurrentLift = 0,
+		CurrentTurn = 0,
 	}
 
-	print("[HelicopterDriveController] Arcade helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] Physical arcade helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
-	local data = activeHelicopters[vehicle]
-
-	if data and data.Main and data.Main.Parent then
-		data.Main.Anchored = false
-	end
-
 	activeHelicopters[vehicle] = nil
 end
 
@@ -128,63 +111,68 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local throttle = seat.Throttle
 		local steer = seat.Steer
-		local lift = 0
+		local liftInput = 0
 
 		if owner and playerInput[owner] then
-			lift = playerInput[owner].Lift or 0
+			liftInput = playerInput[owner].Lift or 0
 		end
 
 		if currentFuel <= 0 then
 			throttle = 0
 			steer = 0
-			lift = 0
+			liftInput = 0
 		end
 
-		data.Yaw -= steer * turnSpeed * 60 * dt
-
-		local yawCFrame = CFrame.Angles(0, math.rad(data.Yaw), 0)
-		local forward = yawCFrame.LookVector
-
-		local targetVelocity = Vector3.zero
-
+		local targetSpeed = 0
 		if throttle > 0 then
-			targetVelocity += forward * speed
+			targetSpeed = speed
 		elseif throttle < 0 then
-			targetVelocity -= forward * speedReverse
+			targetSpeed = -speedReverse
 		end
 
-		if lift > 0 then
-			targetVelocity += Vector3.yAxis * liftSpeed
-		elseif lift < 0 then
-			targetVelocity -= Vector3.yAxis * liftSpeed
+		local targetLift = liftInput * liftSpeed
+		local targetTurn = -steer * turnSpeed
+
+		local speedStep = acceleration * dt
+		data.CurrentSpeed += math.clamp(targetSpeed - data.CurrentSpeed, -speedStep, speedStep)
+		data.CurrentLift += math.clamp(targetLift - data.CurrentLift, -speedStep, speedStep)
+		data.CurrentTurn += math.clamp(targetTurn - data.CurrentTurn, -turnSpeed * dt * 4, turnSpeed * dt * 4)
+
+		local look = main.CFrame.LookVector
+		local flatLook = Vector3.new(look.X, 0, look.Z)
+
+		if flatLook.Magnitude < 0.1 then
+			flatLook = Vector3.zAxis
+		else
+			flatLook = flatLook.Unit
 		end
 
-		local alpha = math.clamp(acceleration * dt / math.max(speed, 1), 0, 1)
-		data.Velocity = data.Velocity:Lerp(targetVelocity, alpha)
+		main.AssemblyLinearVelocity = Vector3.new(
+			flatLook.X * data.CurrentSpeed,
+			data.CurrentLift,
+			flatLook.Z * data.CurrentSpeed
+		)
 
-		local newPosition = main.Position + data.Velocity * dt
-		local targetCFrame = CFrame.new(newPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
+		main.AssemblyAngularVelocity = Vector3.new(
+			0,
+			data.CurrentTurn,
+			0
+		)
 
-		if data.Velocity.Y < -0.1 then
-	if canMoveTo(vehicle, targetCFrame) then
-		vehicle:PivotTo(targetCFrame)
-	else
-		local horizontalPosition = Vector3.new(newPosition.X, main.Position.Y, newPosition.Z)
-		local horizontalCFrame = CFrame.new(horizontalPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
+		local pos = main.Position
+		local _, yaw, _ = main.CFrame:ToOrientation()
+		local targetCFrame = CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 
-		vehicle:PivotTo(horizontalCFrame)
-		data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
-	end
-	else
-		vehicle:PivotTo(targetCFrame)
-	end
+		main.CFrame = main.CFrame:Lerp(targetCFrame, math.clamp(dt * 8, 0, 1))
 
 		if maxFuel > 0 and currentFuel > 0 then
-			local moving = data.Velocity.Magnitude > 0.5
+			local moving =
+				math.abs(data.CurrentSpeed) > 1
+				or math.abs(data.CurrentLift) > 1
+				or math.abs(data.CurrentTurn) > 0.05
 
 			if moving then
-				local used = fuelPerSecond * dt
-				vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - used))
+				vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
 			end
 		end
 	end

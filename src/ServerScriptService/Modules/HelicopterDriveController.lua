@@ -375,6 +375,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		Roll = 0,
 		RotorSpeed = 0,
 		CurrentTurn = 0,
+		LandedCenterY = nil,
 	}
 
 	activeHelicopters[vehicle] = data
@@ -494,7 +495,13 @@ RunService.Heartbeat:Connect(function(dt)
 			targetVerticalSpeed = 0
 		end
 
-		data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, math.max(liftSpeed, descendSpeed, fallSpeed) * 4, dt)
+		-- Якщо посадковий куб вже торкається землі, не даємо моделі
+		-- повільно провалюватися нижче через дрібні похибки raycast/overlap.
+		if groundedNow and liftInput <= 0 then
+			data.VerticalSpeed = 0
+		else
+			data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, math.max(liftSpeed, descendSpeed, fallSpeed) * 4, dt)
+		end
 
 		local yawTurnTarget = rollRatio * turnSpeed * turnSign
 		data.CurrentTurn = approach(data.CurrentTurn or 0, yawTurnTarget, turnAcceleration, dt)
@@ -505,12 +512,23 @@ RunService.Heartbeat:Connect(function(dt)
 		local right = CFrame.Angles(0, controlYaw, 0).RightVector * sideMoveSign
 
 		local currentCenterPosition = data.Ground and data.Ground.Position or main.Position
+
+		if groundedNow and liftInput <= 0 then
+			data.LandedCenterY = data.LandedCenterY or currentCenterPosition.Y
+		else
+			data.LandedCenterY = nil
+		end
+
 		local wantedMove = (forward * data.ForwardSpeed + right * data.SideSpeed + Vector3.new(0, data.VerticalSpeed, 0)) * dt
 		if groundedNow and wantedMove.Y < 0 then
 			wantedMove = Vector3.new(wantedMove.X, 0, wantedMove.Z)
 			data.VerticalSpeed = 0
 		end
+
 		local wantedCenterPosition = currentCenterPosition + wantedMove
+		if data.LandedCenterY then
+			wantedCenterPosition = Vector3.new(wantedCenterPosition.X, data.LandedCenterY, wantedCenterPosition.Z)
+		end
 
 		local targetMainCFrame = getMainCFrameForCenter(data, wantedCenterPosition, data.Yaw, data.Pitch, data.Roll)
 

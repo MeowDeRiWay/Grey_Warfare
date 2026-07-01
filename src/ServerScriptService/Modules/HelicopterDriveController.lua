@@ -241,9 +241,10 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		Pitch = 0,
 		Roll = 0,
 		RotorSpeed = 0,
+		CurrentTurn = 0,
 	}
 
-	print("[HelicopterDriveController] CENTER TURN helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] CENTER TURN V2 helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -348,8 +349,8 @@ RunService.Heartbeat:Connect(function(dt)
 		data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, math.max(liftSpeed, descendSpeed, fallSpeed) * 4, dt)
 
 		local yawTurnTarget = rollRatio * turnSpeed * turnSign
-		local yawTurn = approach(0, yawTurnTarget, turnAcceleration, dt)
-		data.Yaw += yawTurn * dt
+		data.CurrentTurn = approach(data.CurrentTurn or 0, yawTurnTarget, turnAcceleration, dt)
+		data.Yaw += data.CurrentTurn * dt
 
 		local controlYaw = data.Yaw + controlYawOffset
 		local forward = CFrame.Angles(0, controlYaw, 0).LookVector * moveForwardSign

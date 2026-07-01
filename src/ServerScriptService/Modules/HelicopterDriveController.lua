@@ -15,6 +15,7 @@ local LANDING_GAP = 0.08
 local SPAWN_GRACE_TIME = 0.45
 local COLLISION_PADDING = 0.15
 local MIN_CAST_DISTANCE = 0.02
+local EPSILON = 0.001
 
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
@@ -22,6 +23,27 @@ local function getAttr(vehicle, name, default)
 		return default
 	end
 	return value
+end
+
+local function getNumberAttr(vehicle, name, default)
+	local value = tonumber(getAttr(vehicle, name, default))
+	if value == nil then
+		return default
+	end
+	return value
+end
+
+local function approach(current, target, speed, dt)
+	local step = speed * dt
+	if math.abs(target - current) <= step then
+		return target
+	end
+	return current + math.sign(target - current) * step
+end
+
+local function lerpNumber(current, target, smooth, dt)
+	local alpha = math.clamp(smooth * dt, 0, 1)
+	return current + (target - current) * alpha
 end
 
 local function getDriverSeat(vehicle)
@@ -46,6 +68,16 @@ local function getLandingPart(vehicle, main)
 		return landing
 	end
 	return main
+end
+
+local function findPart(vehicle, names)
+	for _, name in ipairs(names) do
+		local part = vehicle:FindFirstChild(name, true)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+	return nil
 end
 
 local function setArcadePhysics(vehicle)
@@ -92,7 +124,6 @@ local function buildRaycastParams(vehicle, ownerPlayer)
 	return params
 end
 
-
 local function buildOverlapParams(vehicle, ownerPlayer)
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -109,12 +140,10 @@ local function buildOverlapParams(vehicle, ownerPlayer)
 end
 
 local function getWallCollisionBoxSize(vehicle)
-	-- Для польоту нам важлива ширина/довжина гелікоптера, але не треба чіпляти підлогу
-	-- всім високим ExtentsSize. Посадку окремо контролює Ground_level.
 	local size = vehicle:GetExtentsSize()
 	return Vector3.new(
 		math.max(0.5, size.X - COLLISION_PADDING),
-		math.max(0.5, math.min(size.Y - COLLISION_PADDING, 2)),
+		math.max(0.5, math.min(size.Y - COLLISION_PADDING, 2.5)),
 		math.max(0.5, size.Z - COLLISION_PADDING)
 	)
 end
@@ -137,25 +166,21 @@ local function getLandingHit(vehicle, landingPart, extraDistance, ownerPlayer)
 	return workspace:Raycast(origin, direction, buildRaycastParams(vehicle, ownerPlayer))
 end
 
-local function getCollisionBoxSize(vehicle)
-	return getWallCollisionBoxSize(vehicle)
-end
-
-local function castMove(vehicle, main, ownerPlayer, fromPos, yaw, displacement)
+local function castMove(vehicle, ownerPlayer, fromPos, yaw, displacement)
 	if displacement.Magnitude < MIN_CAST_DISTANCE then
-		return fromPos, false
+		return fromPos, false, nil
 	end
 
 	local boxCFrame = CFrame.new(fromPos) * CFrame.Angles(0, yaw, 0)
 	local hit = workspace:Blockcast(
 		boxCFrame,
-		getCollisionBoxSize(vehicle),
+		getWallCollisionBoxSize(vehicle),
 		displacement,
 		buildRaycastParams(vehicle, ownerPlayer)
 	)
 
 	if not hit then
-		return fromPos + displacement, false
+		return fromPos + displacement, false, nil
 	end
 
 	local safeDistance = math.max(0, hit.Distance - 0.08)
@@ -164,8 +189,6 @@ local function castMove(vehicle, main, ownerPlayer, fromPos, yaw, displacement)
 end
 
 local function getLandingOffset(main, landingPart)
-	-- Ground_level не довіряємо: якщо він у шаблоні стоїть збоку/криво,
-	-- ставимо його прямо під Main. Це наш чистий посадковий хітбокс.
 	if landingPart == main then
 		return CFrame.new()
 	end
@@ -174,16 +197,55 @@ local function getLandingOffset(main, landingPart)
 	return CFrame.new(0, y, 0)
 end
 
-local function alignLandingPart(main, landingPart, landingOffset)
+local function alignLandingPart(main, landingPart, landingOffset, yaw)
 	if landingPart ~= main then
-		landingPart.CFrame = main.CFrame * landingOffset
+		-- Ground_level лишаємо рівним кубом під гелікоптером, без тангажу/крену.
+		landingPart.CFrame = CFrame.new(main.Position) * CFrame.Angles(0, yaw, 0) * landingOffset
 	end
 end
 
-local function pivotKeepingYaw(vehicle, main, landingPart, landingOffset, position, yaw)
-	vehicle:PivotTo(CFrame.new(position) * CFrame.Angles(0, yaw, 0))
-	alignLandingPart(main, landingPart, landingOffset)
+local function pivotVisual(vehicle, main, landingPart, landingOffset, position, yaw, pitch, roll)
+	local cframe = CFrame.new(position) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(pitch), 0, math.rad(roll))
+	vehicle:PivotTo(cframe)
+	alignLandingPart(main, landingPart, landingOffset, yaw)
 	clearVelocities(vehicle)
+end
+
+local function spinPartAroundLocalAxis(part, axis, degrees)
+	if not part then
+		return
+	end
+
+	local radians = math.rad(degrees)
+	if axis == "X" then
+		part.CFrame = part.CFrame * CFrame.Angles(radians, 0, 0)
+	elseif axis == "Y" then
+		part.CFrame = part.CFrame * CFrame.Angles(0, radians, 0)
+	else
+		part.CFrame = part.CFrame * CFrame.Angles(0, 0, radians)
+	end
+end
+
+local function updateRotors(vehicle, data, dt, hasPilot, isMoving)
+	local idleSpeed = getNumberAttr(vehicle, "Rotor_idle_speed", 300)
+	local flightSpeed = getNumberAttr(vehicle, "Rotor_flight_speed", 1500)
+	local rotorSmooth = getNumberAttr(vehicle, "Rotor_smooth", 8)
+
+	local targetRotorSpeed = 0
+	if hasPilot then
+		targetRotorSpeed = idleSpeed
+		if isMoving then
+			targetRotorSpeed = flightSpeed
+		end
+	end
+
+	data.RotorSpeed = lerpNumber(data.RotorSpeed or 0, targetRotorSpeed, rotorSmooth, dt)
+
+	if math.abs(data.RotorSpeed) > EPSILON then
+		local spin = data.RotorSpeed * dt
+		spinPartAroundLocalAxis(data.MainRotor, "Y", spin)
+		spinPartAroundLocalAxis(data.TailRotor, "X", spin)
+	end
 end
 
 helicopterControlRemote.OnServerEvent:Connect(function(player, input)
@@ -192,6 +254,7 @@ helicopterControlRemote.OnServerEvent:Connect(function(player, input)
 	end
 
 	playerInput[player] = {
+		-- Z = +1, X = -1. Клавіші лишаються старі: Z/X.
 		Lift = math.clamp(tonumber(input.Lift) or 0, -1, 1),
 	}
 end)
@@ -215,25 +278,29 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	local landingOffset = getLandingOffset(main, landingPart)
 
 	setArcadePhysics(vehicle)
-	alignLandingPart(main, landingPart, landingOffset)
 
 	local _, yaw, _ = main.CFrame:ToOrientation()
+	alignLandingPart(main, landingPart, landingOffset, yaw)
 
 	activeHelicopters[vehicle] = {
 		Main = main,
 		Seat = seat,
 		LandingPart = landingPart,
 		LandingOffset = landingOffset,
+		MainRotor = findPart(vehicle, { "MainRotor", "Rotor_main", "Main_rotor" }),
+		TailRotor = findPart(vehicle, { "TailRotor", "Rotor_tail", "Tail_rotor" }),
 		Owner = ownerPlayer,
 
-		CurrentSpeed = 0,
 		Yaw = yaw,
+		Pitch = 0,
+		Roll = 0,
+		RotorSpeed = 0,
 		HoverY = main.Position.Y,
 		IsLanded = false,
 		SpawnGraceLeft = SPAWN_GRACE_TIME,
 	}
 
-	print("[HelicopterDriveController] SIDE SAFE arcade helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] TILT arcade helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -259,30 +326,34 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		setArcadePhysics(vehicle)
-		alignLandingPart(main, landingPart, landingOffset)
 
 		local currentFuel = tonumber(vehicle:GetAttribute("Current_fuel")) or 0
 		local maxFuel = tonumber(vehicle:GetAttribute("Max_fuel")) or 0
 
-		local speed = tonumber(getAttr(vehicle, "Speed", 70)) or 70
-		local speedReverse = tonumber(getAttr(vehicle, "Speed_reverse", 25)) or 25
-		local liftSpeed = tonumber(getAttr(vehicle, "Lift_speed", 18)) or 18
-		local turnSpeed = tonumber(getAttr(vehicle, "Turn_speed", 1.6)) or 1.6
-		local acceleration = tonumber(getAttr(vehicle, "Acceleration", 45)) or 45
-		local fuelPerSecond = tonumber(getAttr(vehicle, "Fuel_per_second", 0.05)) or 0.05
-		local fallSpeed = tonumber(getAttr(vehicle, "Fall_speed", DEFAULT_FALL_SPEED)) or DEFAULT_FALL_SPEED
+		local maxSpeed = getNumberAttr(vehicle, "Max_speed", getNumberAttr(vehicle, "Speed", 80))
+		local reverseSpeed = getNumberAttr(vehicle, "Reverse_speed", getNumberAttr(vehicle, "Speed_reverse", 35))
+		local liftSpeed = getNumberAttr(vehicle, "Lift_speed", 35)
+		local descendSpeed = getNumberAttr(vehicle, "Descend_speed", 25)
+		local turnSpeed = getNumberAttr(vehicle, "Turn_speed", 1.8)
+		local turnAcceleration = getNumberAttr(vehicle, "Turn_acceleration", 4)
+		local tiltSmooth = getNumberAttr(vehicle, "Tilt_smooth", 6)
+		local maxPitchAngle = getNumberAttr(vehicle, "Max_pitch_angle", 12)
+		local maxRollAngle = getNumberAttr(vehicle, "Max_roll_angle", 10)
+		local fuelPerSecond = getNumberAttr(vehicle, "Fuel_per_second", 0.05)
+		local fallSpeed = getNumberAttr(vehicle, "Fall_speed", DEFAULT_FALL_SPEED)
 
 		local pos = main.Position
+		local pilot = hasDriver(seat)
 
-		if not hasDriver(seat) then
-			data.CurrentSpeed = 0
+		if not pilot then
+			data.Pitch = approach(data.Pitch or 0, 0, maxPitchAngle * tiltSmooth, dt)
+			data.Roll = approach(data.Roll or 0, 0, maxRollAngle * tiltSmooth, dt)
+			updateRotors(vehicle, data, dt, false, false)
 
-			-- Перші кадри після спавну не даємо геліку падати,
-			-- бо seatOwner ще садить персонажа, інакше модель встигає провалитись/приземлитись криво.
 			if data.SpawnGraceLeft and data.SpawnGraceLeft > 0 then
 				data.SpawnGraceLeft -= dt
 				data.HoverY = pos.Y
-				pivotKeepingYaw(vehicle, main, landingPart, landingOffset, pos, data.Yaw)
+				pivotVisual(vehicle, main, landingPart, landingOffset, pos, data.Yaw, data.Pitch, data.Roll)
 				continue
 			end
 
@@ -293,12 +364,12 @@ RunService.Heartbeat:Connect(function(dt)
 				local targetMainY = hit.Position.Y - gap + LANDING_GAP
 				local newPos = Vector3.new(pos.X, targetMainY, pos.Z)
 
-				pivotKeepingYaw(vehicle, main, landingPart, landingOffset, newPos, data.Yaw)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll)
 				data.HoverY = newPos.Y
 				data.IsLanded = true
 			else
 				local newPos = pos - Vector3.new(0, fallSpeed * dt, 0)
-				pivotKeepingYaw(vehicle, main, landingPart, landingOffset, newPos, data.Yaw)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll)
 				data.HoverY = newPos.Y
 				data.IsLanded = false
 			end
@@ -327,25 +398,49 @@ RunService.Heartbeat:Connect(function(dt)
 			liftInput = 0
 		end
 
-		local targetSpeed = 0
+		-- W/S задають бажаний тангаж. Швидкість далі береться саме з поточного кута.
+		local targetPitch = 0
 		if throttle > 0 then
-			targetSpeed = speed
+			targetPitch = -maxPitchAngle
 		elseif throttle < 0 then
-			targetSpeed = -speedReverse
+			targetPitch = maxPitchAngle
 		end
 
-		local speedStep = acceleration * dt
-		data.CurrentSpeed += math.clamp(targetSpeed - data.CurrentSpeed, -speedStep, speedStep)
+		-- A/D задають бажаний крен. Поворот береться саме з поточного крену.
+		local targetRoll = -steer * maxRollAngle
+
+		data.Pitch = approach(data.Pitch or 0, targetPitch, maxPitchAngle * tiltSmooth, dt)
+		data.Roll = approach(data.Roll or 0, targetRoll, maxRollAngle * tiltSmooth, dt)
+
+		local pitchRatio = 0
+		if maxPitchAngle > EPSILON then
+			pitchRatio = math.clamp(-(data.Pitch or 0) / maxPitchAngle, -1, 1)
+		end
+
+		local rollRatio = 0
+		if maxRollAngle > EPSILON then
+			rollRatio = math.clamp(-(data.Roll or 0) / maxRollAngle, -1, 1)
+		end
+
+		local forwardSpeed = 0
+		if pitchRatio >= 0 then
+			forwardSpeed = pitchRatio * maxSpeed
+		else
+			forwardSpeed = pitchRatio * reverseSpeed
+		end
+
+		local targetTurnSpeed = rollRatio * turnSpeed
+		data.CurrentTurnSpeed = approach(data.CurrentTurnSpeed or 0, targetTurnSpeed, turnAcceleration, dt)
 
 		local oldYaw = data.Yaw
-		local wantedYaw = data.Yaw + (-steer * turnSpeed * dt)
+		local wantedYaw = data.Yaw + ((data.CurrentTurnSpeed or 0) * dt)
 
-		-- Якщо просто поворотом широкий гелік залазить боком у стіну — поворот блокуємо.
 		if isBoxClear(vehicle, owner, pos, wantedYaw) then
 			data.Yaw = wantedYaw
 		else
 			data.Yaw = oldYaw
-			steer = 0
+			data.CurrentTurnSpeed = 0
+			data.Roll = 0
 		end
 
 		local look = (CFrame.Angles(0, data.Yaw, 0)).LookVector
@@ -356,27 +451,29 @@ RunService.Heartbeat:Connect(function(dt)
 			flatLook = flatLook.Unit
 		end
 
-		local verticalMove = 0
-		if liftInput ~= 0 then
-			verticalMove = liftSpeed * liftInput * dt
+		local verticalSpeed = 0
+		if liftInput > 0 then
+			verticalSpeed = liftSpeed
+		elseif liftInput < 0 then
+			verticalSpeed = -descendSpeed
 		end
 
-		local horizontalMove = flatLook * data.CurrentSpeed * dt
+		local horizontalMove = flatLook * forwardSpeed * dt
+		local verticalMove = verticalSpeed * dt
 		local desiredMove = Vector3.new(horizontalMove.X, verticalMove, horizontalMove.Z)
-		local newPos, blocked, hit = castMove(vehicle, main, owner, pos, data.Yaw, desiredMove)
+		local newPos, blocked, hit = castMove(vehicle, owner, pos, data.Yaw, desiredMove)
 
-		-- Blockcast ловить рух "лобом", а ця перевірка ловить випадок,
-		-- коли широкий гелік боком/кутом уже залазить у стіну після PivotTo.
 		if not blocked and not isBoxClear(vehicle, owner, newPos, data.Yaw) then
 			newPos = pos
 			blocked = true
 		end
 
 		if blocked then
-			-- Аркада: врізався — просто зупинився, без вибуху фізики.
-			data.CurrentSpeed = 0
+			-- Аркада: врізався — просто зупинився/вирівнявся без фізичного вибуху.
+			data.Pitch = 0
+			data.Roll = 0
+			data.CurrentTurnSpeed = 0
 
-			-- Якщо вперлись знизу в землю/платформу, вважаємо це нормальною посадкою.
 			if hit and hit.Normal.Y > 0.45 then
 				data.IsLanded = true
 			else
@@ -386,27 +483,30 @@ RunService.Heartbeat:Connect(function(dt)
 			data.IsLanded = false
 		end
 
-		-- Додаткова перевірка посадки при спуску X: не даємо пройти крізь землю навіть тонким хітбоксом.
+		-- Додаткова перевірка посадки при спуску X.
 		if liftInput < 0 then
-			alignLandingPart(main, landingPart, landingOffset)
+			alignLandingPart(main, landingPart, landingOffset, data.Yaw)
 			local landingHit = getLandingHit(vehicle, landingPart, math.max(LANDING_RAY_DISTANCE, math.abs(verticalMove) + 2), owner)
 			if landingHit then
 				local gap = landingPart.Position.Y - pos.Y
 				local targetMainY = landingHit.Position.Y - gap + LANDING_GAP
 				if newPos.Y <= targetMainY then
 					newPos = Vector3.new(newPos.X, targetMainY, newPos.Z)
-					data.CurrentSpeed = 0
+					data.Pitch = 0
+					data.Roll = 0
+					data.CurrentTurnSpeed = 0
 					data.IsLanded = true
 				end
 			end
 		end
 
+		local isMoving = math.abs(forwardSpeed) > 1 or math.abs(verticalSpeed) > 0 or math.abs(data.CurrentTurnSpeed or 0) > 0.05
 		data.HoverY = newPos.Y
-		pivotKeepingYaw(vehicle, main, landingPart, landingOffset, newPos, data.Yaw)
+		pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll)
+		updateRotors(vehicle, data, dt, true, isMoving)
 
 		if maxFuel > 0 and currentFuel > 0 then
-			local moving = math.abs(data.CurrentSpeed) > 1 or math.abs(liftInput) > 0 or math.abs(steer) > 0
-			if moving then
+			if isMoving then
 				vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
 			end
 		end

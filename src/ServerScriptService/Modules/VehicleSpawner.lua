@@ -166,13 +166,13 @@ end
 
 local function getSpawnOffsetY(vehicle)
 	local vehicleSize = vehicle:GetExtentsSize()
-	local offset = (vehicleSize.Y / 2) + 0.2
 
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		offset += tonumber(vehicle:GetAttribute("Spawn_height_bonus")) or 12
+		local heliClearance = tonumber(vehicle:GetAttribute("Spawn_clearance")) or 1
+		return (vehicleSize.Y / 2) + heliClearance
 	end
 
-	return offset
+	return (vehicleSize.Y / 2) + 0.2
 end
 
 local function getSpawnCFrame(vehicle, spawnCFrame)

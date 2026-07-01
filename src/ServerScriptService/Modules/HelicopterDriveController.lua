@@ -204,13 +204,17 @@ local function alignLandingPart(main, landingPart, landingOffset, yaw)
 	end
 end
 
-local function pivotVisual(vehicle, main, landingPart, landingOffset, position, yaw, pitch, roll, baseRotationOffset)
-	local baseOffset = baseRotationOffset or CFrame.new()
-	local cframe = CFrame.new(position)
+local function pivotVisual(vehicle, main, landingPart, landingOffset, position, yaw, pitch, roll, modelPivotOffset, bodyOffset)
+	-- ВАЖЛИВО:
+	-- PivotTo працює від Pivot моделі, а не від Main.
+	-- Тому спочатку будуємо бажаний CFrame саме для Main,
+	-- а потім переводимо його у CFrame Pivot моделі через збережений офсет.
+	local desiredMainCFrame = CFrame.new(position)
 		* CFrame.Angles(0, yaw, 0)
-		* baseOffset
 		* CFrame.Angles(math.rad(pitch), 0, math.rad(roll))
-	vehicle:PivotTo(cframe)
+		* (bodyOffset or CFrame.new())
+
+	vehicle:PivotTo(desiredMainCFrame * (modelPivotOffset or CFrame.new()))
 	alignLandingPart(main, landingPart, landingOffset, yaw)
 	clearVelocities(vehicle)
 end
@@ -225,12 +229,12 @@ local function rotorAxisCFrame(axis, radians)
 	return CFrame.Angles(0, radians, 0)
 end
 
-local function updateRotorCFrame(main, rotor, baseOffset, axis, angleDegrees)
+local function updateRotorCFrame(main, rotor, baseOffset, axis, angleDegrees, sign)
 	if not rotor or not baseOffset then
 		return
 	end
 
-	local radians = math.rad(angleDegrees)
+	local radians = math.rad(angleDegrees) * (sign or 1)
 	rotor.CFrame = main.CFrame * baseOffset * rotorAxisCFrame(axis, radians)
 end
 
@@ -258,8 +262,8 @@ local function updateRotors(vehicle, data, dt, hasPilot, isMoving)
 		data.TailRotorAngle = data.TailRotorAngle % 360
 	end
 
-	updateRotorCFrame(data.Main, data.MainRotor, data.MainRotorOffset, data.MainRotorAxis, data.MainRotorAngle)
-	updateRotorCFrame(data.Main, data.TailRotor, data.TailRotorOffset, data.TailRotorAxis, data.TailRotorAngle)
+	updateRotorCFrame(data.Main, data.MainRotor, data.MainRotorOffset, data.MainRotorAxis, data.MainRotorAngle, data.MainRotorSign)
+	updateRotorCFrame(data.Main, data.TailRotor, data.TailRotorOffset, data.TailRotorAxis, data.TailRotorAngle, data.TailRotorSign)
 end
 
 helicopterControlRemote.OnServerEvent:Connect(function(player, input)
@@ -293,8 +297,14 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 
 	setArcadePhysics(vehicle)
 
-	local initialPitch, yaw, initialRoll = main.CFrame:ToOrientation()
-	local baseRotationOffset = CFrame.Angles(initialPitch, 0, initialRoll)
+	local _, yaw, _ = main.CFrame:ToOrientation()
+	local modelPivotOffset = main.CFrame:ToObjectSpace(vehicle:GetPivot())
+
+	local bodyPitchOffset = math.rad(getNumberAttr(vehicle, "Body_pitch_offset", 0))
+	local bodyYawOffset = math.rad(getNumberAttr(vehicle, "Body_yaw_offset", 0))
+	local bodyRollOffset = math.rad(getNumberAttr(vehicle, "Body_roll_offset", 0))
+	local bodyOffset = CFrame.Angles(bodyPitchOffset, bodyYawOffset, bodyRollOffset)
+
 	alignLandingPart(main, landingPart, landingOffset, yaw)
 
 	local mainRotor = findPart(vehicle, { "MainRotor", "Rotor_main", "Main_rotor" })
@@ -305,13 +315,16 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		Seat = seat,
 		LandingPart = landingPart,
 		LandingOffset = landingOffset,
-		BaseRotationOffset = baseRotationOffset,
+		ModelPivotOffset = modelPivotOffset,
+		BodyOffset = bodyOffset,
 		MainRotor = mainRotor,
 		TailRotor = tailRotor,
 		MainRotorOffset = mainRotor and main.CFrame:ToObjectSpace(mainRotor.CFrame) or nil,
 		TailRotorOffset = tailRotor and main.CFrame:ToObjectSpace(tailRotor.CFrame) or nil,
 		MainRotorAxis = tostring(getAttr(vehicle, "MainRotor_axis", getAttr(mainRotor or vehicle, "Rotor_axis", "Y"))),
-		TailRotorAxis = tostring(getAttr(vehicle, "TailRotor_axis", getAttr(tailRotor or vehicle, "Rotor_axis", "X"))),
+		TailRotorAxis = tostring(getAttr(vehicle, "TailRotor_axis", getAttr(tailRotor or vehicle, "Rotor_axis", "Z"))),
+		MainRotorSign = getNumberAttr(vehicle, "MainRotor_axis_sign", 1),
+		TailRotorSign = getNumberAttr(vehicle, "TailRotor_axis_sign", 1),
 		Owner = ownerPlayer,
 
 		Yaw = yaw,
@@ -376,7 +389,7 @@ RunService.Heartbeat:Connect(function(dt)
 			if data.SpawnGraceLeft and data.SpawnGraceLeft > 0 then
 				data.SpawnGraceLeft -= dt
 				data.HoverY = pos.Y
-				pivotVisual(vehicle, main, landingPart, landingOffset, pos, data.Yaw, data.Pitch, data.Roll, data.BaseRotationOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, pos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
 				continue
 			end
 
@@ -387,12 +400,12 @@ RunService.Heartbeat:Connect(function(dt)
 				local targetMainY = hit.Position.Y - gap + LANDING_GAP
 				local newPos = Vector3.new(pos.X, targetMainY, pos.Z)
 
-				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.BaseRotationOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
 				data.HoverY = newPos.Y
 				data.IsLanded = true
 			else
 				local newPos = pos - Vector3.new(0, fallSpeed * dt, 0)
-				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.BaseRotationOffset)
+				pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
 				data.HoverY = newPos.Y
 				data.IsLanded = false
 			end
@@ -525,7 +538,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local isMoving = math.abs(forwardSpeed) > 1 or math.abs(verticalSpeed) > 0 or math.abs(data.CurrentTurnSpeed or 0) > 0.05
 		data.HoverY = newPos.Y
-		pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.BaseRotationOffset)
+		pivotVisual(vehicle, main, landingPart, landingOffset, newPos, data.Yaw, data.Pitch, data.Roll, data.ModelPivotOffset, data.BodyOffset)
 		updateRotors(vehicle, data, dt, true, isMoving)
 
 		if maxFuel > 0 and currentFuel > 0 then

@@ -39,6 +39,22 @@ local function getDriverSeat(vehicle)
 	return nil
 end
 
+local function getMain(vehicle)
+	local main = vehicle:FindFirstChild("Main", true)
+	if main and main:IsA("BasePart") then
+		return main
+	end
+	return nil
+end
+
+local function getLandingPart(vehicle)
+	local landing = vehicle:FindFirstChild("Ground_level", true)
+	if landing and landing:IsA("BasePart") then
+		return landing
+	end
+	return getMain(vehicle)
+end
+
 local function paintVehicle(vehicle, teamOwner)
 	local colorPart = getTeamColorPart(vehicle)
 	if colorPart then
@@ -47,15 +63,23 @@ local function paintVehicle(vehicle, teamOwner)
 end
 
 local function prepareVehicle(vehicle)
-	local main = vehicle:FindFirstChild("Main", true)
+	local main = getMain(vehicle)
 
-	if main and main:IsA("BasePart") then
+	if main then
 		vehicle.PrimaryPart = main
 	end
 
 	for _, item in ipairs(vehicle:GetDescendants()) do
 		if item:IsA("BasePart") then
-			item.Anchored = false
+			item.AssemblyLinearVelocity = Vector3.zero
+			item.AssemblyAngularVelocity = Vector3.zero
+
+			if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+				-- Гелік рухається аркадно через PivotTo, тому фізика вимкнена.
+				item.Anchored = true
+			else
+				item.Anchored = false
+			end
 		end
 	end
 end
@@ -164,27 +188,40 @@ local function registerController(vehicle, player)
 	end
 end
 
-local function getSpawnOffsetY(vehicle)
+local function getNormalVehicleSpawnCFrame(vehicle, spawnCFrame)
 	local vehicleSize = vehicle:GetExtentsSize()
+	local offsetY = (vehicleSize.Y / 2) + 0.2
+	return spawnCFrame + Vector3.new(0, offsetY, 0)
+end
 
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		-- HSpawn вважаємо точкою Main. Для гелікоптера треба рівно +1 студ, без бонусів по висоті моделі.
-		return tonumber(vehicle:GetAttribute("Spawn_clearance")) or 1
+local function getHelicopterSpawnCFrame(vehicle, spawnCFrame)
+	local main = getMain(vehicle)
+	if not main then
+		return spawnCFrame + Vector3.new(0, 1, 0)
 	end
 
-	return (vehicleSize.Y / 2) + 0.2
+	local landingPart = getLandingPart(vehicle) or main
+	local clearance = tonumber(vehicle:GetAttribute("Spawn_clearance")) or 1
+	local yaw = tonumber(vehicle:GetAttribute("Spawn_yaw")) or 90
+
+	-- Для геліка HSpawn означає рівень посадки.
+	-- Ставимо НИЗ Ground_level на HSpawn + 1 студ.
+	-- Це прибирає провал під землю, навіть якщо Main не внизу моделі.
+	local currentLandingBottomY = landingPart.Position.Y - (landingPart.Size.Y / 2)
+	local currentMainY = main.Position.Y
+	local desiredLandingBottomY = spawnCFrame.Position.Y + clearance
+	local desiredMainY = currentMainY + (desiredLandingBottomY - currentLandingBottomY)
+
+	local spawnPosition = Vector3.new(spawnCFrame.Position.X, desiredMainY, spawnCFrame.Position.Z)
+	return CFrame.new(spawnPosition) * CFrame.Angles(0, math.rad(yaw), 0)
 end
 
 local function getSpawnCFrame(vehicle, spawnCFrame)
-	local offsetY = getSpawnOffsetY(vehicle)
-	local spawnPosition = spawnCFrame.Position + Vector3.new(0, offsetY, 0)
-
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		local yaw = tonumber(vehicle:GetAttribute("Spawn_yaw")) or 90
-		return CFrame.new(spawnPosition) * CFrame.Angles(0, math.rad(yaw), 0)
+		return getHelicopterSpawnCFrame(vehicle, spawnCFrame)
 	end
 
-	return spawnCFrame + Vector3.new(0, offsetY, 0)
+	return getNormalVehicleSpawnCFrame(vehicle, spawnCFrame)
 end
 
 function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFrame, teamOwner)
@@ -237,8 +274,6 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	protectDriverSeat(vehicle)
 
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		-- Для аркадного геліка спочатку фіксуємо модель контролером,
-		-- а вже потім садимо гравця. Інакше Seat може смикнути всю збірку до персонажа.
 		registerController(vehicle, player)
 		seatOwner(player, vehicle)
 	else

@@ -244,7 +244,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		CurrentTurn = 0,
 	}
 
-	print("[HelicopterDriveController] CENTER TURN V2 helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] CENTER TURN FUEL helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -268,6 +268,11 @@ RunService.Heartbeat:Connect(function(dt)
 		local owner = data.Owner
 		local occupantPlayer = getOccupantPlayer(seat)
 		local hasPilot = occupantPlayer ~= nil and occupantPlayer == owner
+		local currentFuel = tonumber(vehicle:GetAttribute("Current_fuel")) or 0
+		local maxFuel = tonumber(vehicle:GetAttribute("Max_fuel")) or 0
+		local fuelPerSecond = getNumberAttr(vehicle, "Fuel_per_second", 1)
+		local hasFuel = maxFuel <= 0 or currentFuel > 0
+		local hasControl = hasPilot and hasFuel
 
 		local maxSpeed = getNumberAttr(vehicle, "Max_speed", 80)
 		local reverseSpeed = getNumberAttr(vehicle, "Reverse_speed", 35)
@@ -296,7 +301,7 @@ RunService.Heartbeat:Connect(function(dt)
 		local steer = 0
 		local liftInput = 0
 
-		if hasPilot then
+		if hasControl then
 			throttle = seat.Throttle
 			steer = seat.Steer
 			if owner and playerInput[owner] then
@@ -332,7 +337,7 @@ RunService.Heartbeat:Connect(function(dt)
 		data.SideSpeed = approach(data.SideSpeed, targetSideSpeed, brakeAcceleration, dt)
 
 		local targetVerticalSpeed = 0
-		if hasPilot then
+		if hasControl then
 			if liftInput > 0 then
 				targetVerticalSpeed = liftInput * liftSpeed
 			elseif liftInput < 0 then
@@ -381,8 +386,12 @@ RunService.Heartbeat:Connect(function(dt)
 			pivotVehicleToMain(data, stopMainCFrame)
 		end
 
+		if hasControl and maxFuel > 0 and fuelPerSecond > 0 then
+			vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
+		end
+
 		local rotorTarget = 0
-		if hasPilot then
+		if hasControl then
 			local movementAmount = math.clamp((math.abs(data.ForwardSpeed) + math.abs(data.SideSpeed) + math.abs(data.VerticalSpeed)) / math.max(maxSpeed, 1), 0, 1)
 			rotorTarget = rotorIdleSpeed + (rotorFlightSpeed - rotorIdleSpeed) * movementAmount
 		else

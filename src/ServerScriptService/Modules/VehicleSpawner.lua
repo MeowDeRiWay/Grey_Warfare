@@ -168,8 +168,8 @@ local function getSpawnOffsetY(vehicle)
 	local vehicleSize = vehicle:GetExtentsSize()
 
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		local heliClearance = tonumber(vehicle:GetAttribute("Spawn_clearance")) or 1
-		return (vehicleSize.Y / 2) + heliClearance
+		-- HSpawn вважаємо точкою Main. Для гелікоптера треба рівно +1 студ, без бонусів по висоті моделі.
+		return tonumber(vehicle:GetAttribute("Spawn_clearance")) or 1
 	end
 
 	return (vehicleSize.Y / 2) + 0.2
@@ -235,8 +235,16 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 
 	paintVehicle(vehicle, teamOwner or 0)
 	protectDriverSeat(vehicle)
-	seatOwner(player, vehicle)
-	registerController(vehicle, player)
+
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+		-- Для аркадного геліка спочатку фіксуємо модель контролером,
+		-- а вже потім садимо гравця. Інакше Seat може смикнути всю збірку до персонажа.
+		registerController(vehicle, player)
+		seatOwner(player, vehicle)
+	else
+		seatOwner(player, vehicle)
+		registerController(vehicle, player)
+	end
 
 	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Folder:", folderName)
 

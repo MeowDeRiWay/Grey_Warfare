@@ -55,6 +55,10 @@ local function getConfig(vehicle)
 		Can_flip = getAttr(vehicle, "Can_flip"),
 
 		Obstacle_check_distance = getAttr(vehicle, "Obstacle_check_distance"),
+
+		Max_fuel = getAttr(vehicle, "Max_fuel"),
+		Current_fuel = getAttr(vehicle, "Current_fuel"),
+		Fuel_per_stud = getAttr(vehicle, "Fuel_per_stud"),
 	}
 end
 
@@ -75,6 +79,34 @@ local function isObstacleAhead(vehicle, main, direction, distance)
 	local result = workspace:Raycast(origin, direction.Unit * distance, params)
 
 	return result ~= nil
+end
+
+local function updateFuel(vehicle, data, main, cfg)
+	local currentFuel = vehicle:GetAttribute("Current_fuel") or 0
+
+	local distance = (main.Position - data.LastPosition).Magnitude
+	data.LastPosition = main.Position
+
+	if currentFuel <= 0 then
+		data.CurrentSpeed = 0
+		main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
+		return false
+	end
+
+	if distance > 0.01 and math.abs(data.CurrentSpeed) > 0.5 then
+		local fuelUsed = distance * cfg.Fuel_per_stud
+		local newFuel = math.max(0, currentFuel - fuelUsed)
+
+		vehicle:SetAttribute("Current_fuel", newFuel)
+
+		if newFuel <= 0 then
+			data.CurrentSpeed = 0
+			main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
+			return false
+		end
+	end
+
+	return true
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -101,6 +133,8 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		CurrentSpeed = 0,
 		CurrentSteer = 0,
 		FlippedTime = 0,
+
+		LastPosition = main.Position,
 	}
 
 	print("[VehicleDriveController] Vehicle registered:", vehicle.Name)
@@ -126,9 +160,14 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local cfg = getConfig(vehicle)
+		local hasFuel = updateFuel(vehicle, data, main, cfg)
 
 		local throttle = seat.Throttle
 		local steer = seat.Steer
+
+		if not hasFuel then
+			throttle = 0
+		end
 
 		local targetSpeed = 0
 
@@ -222,6 +261,7 @@ RunService.Heartbeat:Connect(function(dt)
 				data.CurrentSpeed = 0
 				data.CurrentSteer = 0
 				data.FlippedTime = 0
+				data.LastPosition = main.Position
 
 				print("[VehicleDriveController] Vehicle flipped back:", vehicle.Name)
 			end

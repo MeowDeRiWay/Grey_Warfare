@@ -122,7 +122,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local newPosition = main.Position + data.Velocity * dt
 
-		if newPosition.Y < 5 then
+		if newPosition.Y < 1 then
 			newPosition = Vector3.new(newPosition.X, 5, newPosition.Z)
 			data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
 		end

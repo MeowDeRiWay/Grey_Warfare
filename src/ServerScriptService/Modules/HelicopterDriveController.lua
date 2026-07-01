@@ -1,8 +1,13 @@
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local HelicopterDriveController = {}
 
 local activeHelicopters = {}
+local playerInput = {}
+
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local helicopterControlRemote = remotes:WaitForChild("HelicopterControl")
 
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
@@ -27,6 +32,34 @@ local function getMain(vehicle)
 	end
 	return nil
 end
+
+local function canMoveTo(vehicle, targetCFrame)
+	local size = vehicle:GetExtentsSize() * 0.95
+
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { vehicle }
+
+	local parts = workspace:GetPartBoundsInBox(targetCFrame, size, params)
+
+	for _, part in ipairs(parts) do
+		if part.CanCollide then
+			return false
+		end
+	end
+
+	return true
+end
+
+helicopterControlRemote.OnServerEvent:Connect(function(player, input)
+	if typeof(input) ~= "table" then
+		return
+	end
+
+	playerInput[player] = {
+		Lift = tonumber(input.Lift) or 0,
+	}
+end)
 
 function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	local main = getMain(vehicle)
@@ -76,6 +109,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local main = data.Main
 		local seat = data.Seat
+		local owner = data.Owner
 
 		if not main or not main.Parent or not seat or not seat.Parent then
 			activeHelicopters[vehicle] = nil
@@ -87,7 +121,6 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local speed = tonumber(getAttr(vehicle, "Speed", 120)) or 120
 		local speedReverse = tonumber(getAttr(vehicle, "Speed_reverse", 40)) or 40
-		local strafeSpeed = tonumber(getAttr(vehicle, "Strafe_speed", 60)) or 60
 		local liftSpeed = tonumber(getAttr(vehicle, "Lift_speed", 40)) or 40
 		local turnSpeed = tonumber(getAttr(vehicle, "Turn_speed", 2)) or 2
 		local acceleration = tonumber(getAttr(vehicle, "Acceleration", 80)) or 80
@@ -95,25 +128,34 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local throttle = seat.Throttle
 		local steer = seat.Steer
+		local lift = 0
+
+		if owner and playerInput[owner] then
+			lift = playerInput[owner].Lift or 0
+		end
 
 		if currentFuel <= 0 then
 			throttle = 0
 			steer = 0
+			lift = 0
 		end
 
 		data.Yaw -= steer * turnSpeed * 60 * dt
 
 		local yawCFrame = CFrame.Angles(0, math.rad(data.Yaw), 0)
 		local forward = yawCFrame.LookVector
-		local right = yawCFrame.RightVector
 
 		local targetVelocity = Vector3.zero
 
 		if throttle > 0 then
 			targetVelocity += forward * speed
-			targetVelocity += Vector3.yAxis * liftSpeed
 		elseif throttle < 0 then
 			targetVelocity -= forward * speedReverse
+		end
+
+		if lift > 0 then
+			targetVelocity += Vector3.yAxis * liftSpeed
+		elseif lift < 0 then
 			targetVelocity -= Vector3.yAxis * liftSpeed
 		end
 
@@ -121,15 +163,22 @@ RunService.Heartbeat:Connect(function(dt)
 		data.Velocity = data.Velocity:Lerp(targetVelocity, alpha)
 
 		local newPosition = main.Position + data.Velocity * dt
+		local targetCFrame = CFrame.new(newPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
 
-		if newPosition.Y < 3 then
-			newPosition = Vector3.new(newPosition.X, 5, newPosition.Z)
-			data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
+		if canMoveTo(vehicle, targetCFrame) then
+			vehicle:PivotTo(targetCFrame)
+		else
+			local horizontalPosition = Vector3.new(newPosition.X, main.Position.Y, newPosition.Z)
+			local horizontalCFrame = CFrame.new(horizontalPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
+
+			if canMoveTo(vehicle, horizontalCFrame) then
+				vehicle:PivotTo(horizontalCFrame)
+			end
+
+			if data.Velocity.Y < 0 then
+				data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
+			end
 		end
-
-		vehicle:PivotTo(
-			CFrame.new(newPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
-		)
 
 		if maxFuel > 0 and currentFuel > 0 then
 			local moving = data.Velocity.Magnitude > 0.5

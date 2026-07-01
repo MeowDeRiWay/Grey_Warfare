@@ -1,6 +1,6 @@
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 
 local HelicopterDriveController = {}
 
@@ -9,8 +9,6 @@ local playerInput = {}
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local helicopterControlRemote = remotes:WaitForChild("HelicopterControl")
-
-local EPS = 0.001
 
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
@@ -21,38 +19,29 @@ local function getAttr(vehicle, name, default)
 end
 
 local function getNumberAttr(vehicle, name, default)
-	local value = tonumber(getAttr(vehicle, name, default))
-	if value == nil then
-		return default
-	end
-	return value
+	return tonumber(getAttr(vehicle, name, default)) or default
 end
 
 local function getStringAttr(vehicle, name, default)
 	local value = getAttr(vehicle, name, default)
-	if typeof(value) ~= "string" then
-		return default
+	if typeof(value) == "string" then
+		return value
 	end
-	return value
+	return default
 end
 
 local function approach(current, target, speed, dt)
+	local delta = target - current
 	local step = speed * dt
-	local diff = target - current
-	if math.abs(diff) <= step then
+	if math.abs(delta) <= step then
 		return target
 	end
-	return current + math.sign(diff) * step
-end
-
-local function expApproach(current, target, smooth, dt)
-	local alpha = 1 - math.exp(-math.max(smooth, 0) * dt)
-	return current + (target - current) * alpha
+	return current + math.sign(delta) * step
 end
 
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
-	if seat and seat:IsA("VehicleSeat") then
+	if seat and (seat:IsA("VehicleSeat") or seat:IsA("Seat")) then
 		return seat
 	end
 	return nil
@@ -74,89 +63,120 @@ local function getPart(vehicle, name)
 	return nil
 end
 
-local function setupArcadeParts(vehicle)
+local function getOccupantPlayer(seat)
+	local humanoid = seat.Occupant
+	if not humanoid then
+		return nil
+	end
+	return Players:GetPlayerFromCharacter(humanoid.Parent)
+end
+
+local function anchorAll(vehicle)
 	for _, item in ipairs(vehicle:GetDescendants()) do
 		if item:IsA("BasePart") then
 			item.Anchored = true
 			item.CanCollide = false
 			item.CanTouch = false
-			item.CanQuery = item.Name == "Ground_level"
+			item.CanQuery = true
 		end
 	end
 end
 
-local function getBoxSize(data)
-	if data.GroundLevel and data.GroundLevel.Parent then
-		return data.GroundLevel.Size
-	end
-	return data.ModelSize
-end
+local function getAxisRotation(axis, degrees)
+	local radians = math.rad(degrees)
+	axis = string.upper(axis or "Y")
 
-local function getGroundBoxCFrame(data, candidatePivot)
-	if not data.GroundLevel or not data.GroundLevel.Parent then
-		return candidatePivot
+	if axis == "X" then
+		return CFrame.Angles(radians, 0, 0)
+	elseif axis == "Z" then
+		return CFrame.Angles(0, 0, radians)
 	end
 
-	local groundLocal = data.InitialPivot:ToObjectSpace(data.GroundLevel.CFrame)
-	return candidatePivot * groundLocal
+	return CFrame.Angles(0, radians, 0)
 end
 
-local function getOverlapParams(vehicle)
+local function spinPart(part, axis, sign, degrees)
+	if not part or not part.Parent then
+		return
+	end
+
+	part.CFrame = part.CFrame * getAxisRotation(axis, degrees * sign)
+end
+
+local function makeOverlapParams(vehicle, ownerPlayer)
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
+
+	local ignore = { vehicle }
+	if ownerPlayer and ownerPlayer.Character then
+		table.insert(ignore, ownerPlayer.Character)
+	end
+
+	params.FilterDescendantsInstances = ignore
 	params.RespectCanCollide = true
 	return params
 end
 
-local function getRaycastParams(vehicle)
+local function makeRayParams(vehicle, ownerPlayer)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
+
+	local ignore = { vehicle }
+	if ownerPlayer and ownerPlayer.Character then
+		table.insert(ignore, ownerPlayer.Character)
+	end
+
+	params.FilterDescendantsInstances = ignore
 	params.RespectCanCollide = true
 	return params
 end
 
-local function isBoxBlocked(vehicle, cframe, size)
-	local parts = Workspace:GetPartBoundsInBox(cframe, size, getOverlapParams(vehicle))
+local function hasBlockingParts(vehicle, boxCFrame, boxSize, ownerPlayer)
+	local params = makeOverlapParams(vehicle, ownerPlayer)
+	local parts = workspace:GetPartBoundsInBox(boxCFrame, boxSize, params)
+
 	for _, part in ipairs(parts) do
 		if part:IsA("BasePart") and part.CanCollide then
 			return true, part
 		end
 	end
+
 	return false, nil
 end
 
-local function canMoveTo(vehicle, data, candidatePivot)
-	local boxCFrame = getGroundBoxCFrame(data, candidatePivot)
-	local boxSize = getBoxSize(data) * 0.96
-	local blocked = isBoxBlocked(vehicle, boxCFrame, boxSize)
-	return not blocked
-end
-
-local function hasDriver(data)
-	local seat = data.Seat
-	if not seat or not seat.Parent then
+local function isGrounded(vehicle, groundPart, ownerPlayer)
+	if not groundPart then
 		return false
 	end
-	return seat.Occupant ~= nil
+
+	local rayParams = makeRayParams(vehicle, ownerPlayer)
+	local downDistance = 0.35
+	local origin = groundPart.Position
+	local result = workspace:Raycast(origin, Vector3.new(0, -(groundPart.Size.Y / 2 + downDistance), 0), rayParams)
+	return result ~= nil
 end
 
-local function rotatePartAroundOwnAxis(part, axisName, sign, degrees)
-	if not part or not part.Parent then
-		return
-	end
+local function getMainTargetCFrame(data, position, yaw, pitch, roll)
+	local bodyPitchOffset = math.rad(getNumberAttr(data.Vehicle, "Body_pitch_offset", 0))
+	local bodyYawOffset = math.rad(getNumberAttr(data.Vehicle, "Body_yaw_offset", 0))
+	local bodyRollOffset = math.rad(getNumberAttr(data.Vehicle, "Body_roll_offset", 0))
 
-	local radians = math.rad(degrees * sign)
-	axisName = string.upper(axisName or "Y")
+	-- У твоєї поточної моделі локальні осі Main не співпали з носом гелікоптера:
+	-- старий pitch давав крен, а старий roll давав тангаж.
+	-- Тому тут навмисно міняємо їх місцями:
+	--   pitch -> Z
+	--   roll  -> X
+	return CFrame.new(position)
+		* CFrame.Angles(0, yaw, 0)
+		* CFrame.Angles(bodyPitchOffset, bodyYawOffset, bodyRollOffset)
+		* CFrame.Angles(math.rad(roll), 0, math.rad(pitch))
+end
 
-	if axisName == "X" then
-		part.CFrame = part.CFrame * CFrame.Angles(radians, 0, 0)
-	elseif axisName == "Z" then
-		part.CFrame = part.CFrame * CFrame.Angles(0, 0, radians)
-	else
-		part.CFrame = part.CFrame * CFrame.Angles(0, radians, 0)
-	end
+local function pivotVehicleToMain(data, targetMainCFrame)
+	-- Не використовуємо Model:PivotTo, бо якщо Pivot моделі далеко від Main,
+	-- гелік починає ніби обертатися навколо точки десь попереду.
+	-- SetPrimaryPartCFrame ставить саме Main у потрібний CFrame.
+	data.Vehicle:SetPrimaryPartCFrame(targetMainCFrame)
 end
 
 helicopterControlRemote.OnServerEvent:Connect(function(player, input)
@@ -165,7 +185,7 @@ helicopterControlRemote.OnServerEvent:Connect(function(player, input)
 	end
 
 	playerInput[player] = {
-		Lift = math.clamp(tonumber(input.Lift) or 0, -1, 1), -- Z = 1, X = -1
+		Lift = math.clamp(tonumber(input.Lift) or 0, -1, 1),
 	}
 end)
 
@@ -179,41 +199,38 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	end
 
 	if not seat then
-		warn("[HelicopterDriveController] Driver_seat VehicleSeat not found:", vehicle.Name)
+		warn("[HelicopterDriveController] Driver_seat not found:", vehicle.Name)
 		return
 	end
 
-	setupArcadeParts(vehicle)
+	vehicle.PrimaryPart = main
+	anchorAll(vehicle)
 
 	local pivot = vehicle:GetPivot()
-	local _, startYaw, _ = main.CFrame:ToOrientation()
+	local _, yaw, _ = main.CFrame:ToOrientation()
 
 	activeHelicopters[vehicle] = {
 		Vehicle = vehicle,
 		Main = main,
 		Seat = seat,
-		Owner = ownerPlayer,
-		GroundLevel = getPart(vehicle, "Ground_level"),
+		Ground = getPart(vehicle, "Ground_level"),
 		MainRotor = getPart(vehicle, "MainRotor"),
 		TailRotor = getPart(vehicle, "TailRotor"),
+		Owner = ownerPlayer,
 
-		InitialPivot = pivot,
-		MainLocal = pivot:ToObjectSpace(main.CFrame),
-		ModelSize = vehicle:GetExtentsSize(),
+		MainToPivot = main.CFrame:ToObjectSpace(pivot),
+		MainToGround = getPart(vehicle, "Ground_level") and main.CFrame:ToObjectSpace(getPart(vehicle, "Ground_level").CFrame) or CFrame.new(),
 
-		Position = pivot.Position,
-		Yaw = startYaw,
-
+		Yaw = yaw,
 		ForwardSpeed = 0,
 		SideSpeed = 0,
 		VerticalSpeed = 0,
-		CurrentPitch = 0,
-		CurrentRoll = 0,
+		Pitch = 0,
+		Roll = 0,
 		RotorSpeed = 0,
-		Landed = false,
 	}
 
-	print("[HelicopterDriveController] TILT side-fixed helicopter registered:", vehicle.Name)
+	print("[HelicopterDriveController] AXIS SWAP + side-fixed helicopter registered:", vehicle.Name)
 end
 
 function HelicopterDriveController.UnregisterVehicle(vehicle)
@@ -229,21 +246,18 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local main = data.Main
 		local seat = data.Seat
-		local owner = data.Owner
-
 		if not main or not main.Parent or not seat or not seat.Parent then
 			activeHelicopters[vehicle] = nil
 			continue
 		end
 
-		local currentFuel = tonumber(vehicle:GetAttribute("Current_fuel")) or 0
-		local maxFuel = tonumber(vehicle:GetAttribute("Max_fuel")) or 0
-		local hasPilot = hasDriver(data)
-		local canFly = hasPilot and currentFuel > 0
+		local owner = data.Owner
+		local occupantPlayer = getOccupantPlayer(seat)
+		local hasPilot = occupantPlayer ~= nil and occupantPlayer == owner
 
 		local maxSpeed = getNumberAttr(vehicle, "Max_speed", 80)
 		local reverseSpeed = getNumberAttr(vehicle, "Reverse_speed", 35)
-		local sideSpeedMax = getNumberAttr(vehicle, "Side_speed", 45)
+		local sideSpeed = getNumberAttr(vehicle, "Side_speed", 45)
 		local brakeAcceleration = getNumberAttr(vehicle, "Brake_acceleration", 55)
 		local liftSpeed = getNumberAttr(vehicle, "Lift_speed", 35)
 		local descendSpeed = getNumberAttr(vehicle, "Descend_speed", 25)
@@ -255,152 +269,121 @@ RunService.Heartbeat:Connect(function(dt)
 		local rotorIdleSpeed = getNumberAttr(vehicle, "Rotor_idle_speed", 300)
 		local rotorFlightSpeed = getNumberAttr(vehicle, "Rotor_flight_speed", 1500)
 		local rotorSmooth = getNumberAttr(vehicle, "Rotor_smooth", 8)
-		local fuelPerSecond = getNumberAttr(vehicle, "Fuel_per_second", 0.05)
+		local fallSpeed = getNumberAttr(vehicle, "Fall_speed", 25)
 
-		local controlYawOffset = math.rad(getNumberAttr(vehicle, "Control_yaw_offset", 0))
-		local bodyPitchOffset = math.rad(getNumberAttr(vehicle, "Body_pitch_offset", 0))
-		local bodyYawOffset = math.rad(getNumberAttr(vehicle, "Body_yaw_offset", 0))
-		local bodyRollOffset = math.rad(getNumberAttr(vehicle, "Body_roll_offset", 0))
-
-		local visualPitchSign = getNumberAttr(vehicle, "Visual_pitch_sign", 1)
+		local visualPitchSign = getNumberAttr(vehicle, "Visual_pitch_sign", -1)
 		local visualRollSign = getNumberAttr(vehicle, "Visual_roll_sign", 1)
+		local turnSign = getNumberAttr(vehicle, "Turn_sign", 1)
 		local moveForwardSign = getNumberAttr(vehicle, "Move_forward_sign", -1)
 		local sideMoveSign = getNumberAttr(vehicle, "Side_move_sign", -1)
-		local turnSign = getNumberAttr(vehicle, "Turn_sign", 1)
-
-		local mainRotorAxis = getStringAttr(vehicle, "MainRotor_axis", "Y")
-		local mainRotorSign = getNumberAttr(vehicle, "MainRotor_axis_sign", 1)
-		local tailRotorAxis = getStringAttr(vehicle, "TailRotor_axis", "Z")
-		local tailRotorSign = getNumberAttr(vehicle, "TailRotor_axis_sign", 1)
+		local controlYawOffset = math.rad(getNumberAttr(vehicle, "Control_yaw_offset", -90))
 
 		local throttle = 0
 		local steer = 0
 		local liftInput = 0
 
-		if canFly then
-			throttle = math.clamp(seat.Throttle, -1, 1)
-			steer = math.clamp(seat.Steer, -1, 1)
+		if hasPilot then
+			throttle = seat.Throttle
+			steer = seat.Steer
 			if owner and playerInput[owner] then
 				liftInput = playerInput[owner].Lift or 0
 			end
 		end
 
-		local targetPitch = throttle * maxPitchAngle * visualPitchSign
-		local targetRoll = steer * maxRollAngle * visualRollSign
-
-		data.CurrentPitch = expApproach(data.CurrentPitch, targetPitch, tiltSmooth, dt)
-		data.CurrentRoll = expApproach(data.CurrentRoll, targetRoll, tiltSmooth, dt)
-
-		local forwardRatio = math.clamp(data.CurrentPitch / math.max(maxPitchAngle, EPS), -1, 1) * visualPitchSign
-		local sideRatio = math.clamp(data.CurrentRoll / math.max(maxRollAngle, EPS), -1, 1) * visualRollSign
-
-		local targetForwardSpeed = 0
-		if forwardRatio > 0 then
-			targetForwardSpeed = forwardRatio * maxSpeed * moveForwardSign
-		elseif forwardRatio < 0 then
-			targetForwardSpeed = forwardRatio * reverseSpeed * moveForwardSign
+		local targetPitch = 0
+		if throttle > 0 then
+			targetPitch = -maxPitchAngle * visualPitchSign
+		elseif throttle < 0 then
+			targetPitch = maxPitchAngle * 0.65 * visualPitchSign
 		end
 
-		local targetSideSpeed = sideRatio * sideSpeedMax * sideMoveSign
+		local targetRoll = -steer * maxRollAngle * visualRollSign
 
-		local speedChange = brakeAcceleration * dt
-		data.ForwardSpeed += math.clamp(targetForwardSpeed - data.ForwardSpeed, -speedChange, speedChange)
-		data.SideSpeed += math.clamp(targetSideSpeed - data.SideSpeed, -speedChange, speedChange)
+		data.Pitch = approach(data.Pitch, targetPitch, maxPitchAngle * tiltSmooth, dt)
+		data.Roll = approach(data.Roll, targetRoll, maxRollAngle * tiltSmooth, dt)
+
+		local pitchRatio = math.clamp((-data.Pitch * visualPitchSign) / maxPitchAngle, -1, 1)
+		local rollRatio = math.clamp((-data.Roll * visualRollSign) / maxRollAngle, -1, 1)
+
+		local targetForwardSpeed = 0
+		if pitchRatio > 0 then
+			targetForwardSpeed = pitchRatio * maxSpeed
+		elseif pitchRatio < 0 then
+			targetForwardSpeed = pitchRatio * reverseSpeed
+		end
+
+		local targetSideSpeed = rollRatio * sideSpeed
+
+		data.ForwardSpeed = approach(data.ForwardSpeed, targetForwardSpeed, brakeAcceleration, dt)
+		data.SideSpeed = approach(data.SideSpeed, targetSideSpeed, brakeAcceleration, dt)
 
 		local targetVerticalSpeed = 0
-		if canFly then
+		if hasPilot then
 			if liftInput > 0 then
 				targetVerticalSpeed = liftInput * liftSpeed
 			elseif liftInput < 0 then
 				targetVerticalSpeed = liftInput * descendSpeed
 			end
 		else
-			targetVerticalSpeed = -descendSpeed
+			if isGrounded(vehicle, data.Ground, owner) then
+				targetVerticalSpeed = 0
+			else
+				targetVerticalSpeed = -fallSpeed
+			end
 		end
 
-		data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, brakeAcceleration, dt)
+		data.VerticalSpeed = approach(data.VerticalSpeed, targetVerticalSpeed, math.max(liftSpeed, descendSpeed, fallSpeed) * 4, dt)
 
-		local yawInput = sideRatio * turnSpeed * turnSign
-		local yawStep = math.clamp(yawInput, -turnAcceleration, turnAcceleration) * dt
-		data.Yaw += yawStep
+		local yawTurnTarget = rollRatio * turnSpeed * turnSign
+		local yawTurn = approach(0, yawTurnTarget, turnAcceleration, dt)
+		data.Yaw += yawTurn * dt
 
-		local yawCFrame = CFrame.Angles(0, data.Yaw + controlYawOffset, 0)
-		local forwardVector = yawCFrame.LookVector
-		local rightVector = yawCFrame.RightVector
-		local moveDelta =
-			(forwardVector * data.ForwardSpeed + rightVector * data.SideSpeed + Vector3.yAxis * data.VerticalSpeed) * dt
+		local controlYaw = data.Yaw + controlYawOffset
+		local forward = CFrame.Angles(0, controlYaw, 0).LookVector * moveForwardSign
+		local right = CFrame.Angles(0, controlYaw, 0).RightVector * sideMoveSign
 
-		local candidatePosition = data.Position + moveDelta
-		local visualRotation =
-			CFrame.Angles(0, data.Yaw, 0)
-			* CFrame.Angles(bodyPitchOffset + math.rad(data.CurrentPitch), bodyYawOffset, bodyRollOffset + math.rad(data.CurrentRoll))
+		local currentPosition = main.Position
+		local wantedMove = (forward * data.ForwardSpeed + right * data.SideSpeed + Vector3.new(0, data.VerticalSpeed, 0)) * dt
+		local wantedPosition = currentPosition + wantedMove
 
-		local candidatePivot = CFrame.new(candidatePosition) * visualRotation
+		local targetMainCFrame = getMainTargetCFrame(data, wantedPosition, data.Yaw, data.Pitch, data.Roll)
 
-		if canMoveTo(vehicle, data, candidatePivot) then
-			data.Position = candidatePosition
-			data.Landed = false
+		local canMove = true
+		if data.Ground then
+			local targetGroundCFrame = targetMainCFrame * data.MainToGround
+			local blocking = hasBlockingParts(vehicle, targetGroundCFrame, data.Ground.Size, owner)
+			if blocking then
+				canMove = false
+			end
+		end
+
+		if canMove then
+			pivotVehicleToMain(data, targetMainCFrame)
 		else
-			-- Пробуємо відсікти рух по осях окремо, щоб не проходив крізь стіни, але міг ковзнути вздовж них.
-			local horizontalDelta = forwardVector * data.ForwardSpeed * dt
-			local sideDelta = rightVector * data.SideSpeed * dt
-			local verticalDelta = Vector3.yAxis * data.VerticalSpeed * dt
-
-			local testPosition = data.Position
-
-			local testPivot = CFrame.new(testPosition + horizontalDelta) * visualRotation
-			if canMoveTo(vehicle, data, testPivot) then
-				testPosition += horizontalDelta
-			else
-				data.ForwardSpeed = 0
-			end
-
-			testPivot = CFrame.new(testPosition + sideDelta) * visualRotation
-			if canMoveTo(vehicle, data, testPivot) then
-				testPosition += sideDelta
-			else
-				data.SideSpeed = 0
-			end
-
-			testPivot = CFrame.new(testPosition + verticalDelta) * visualRotation
-			if canMoveTo(vehicle, data, testPivot) then
-				testPosition += verticalDelta
-				data.Landed = false
-			else
-				if data.VerticalSpeed < 0 then
-					data.Landed = true
-				end
-				data.VerticalSpeed = 0
-			end
-
-			data.Position = testPosition
-			candidatePivot = CFrame.new(data.Position) * visualRotation
+			data.ForwardSpeed = 0
+			data.SideSpeed = 0
+			data.VerticalSpeed = 0
+			local stopMainCFrame = getMainTargetCFrame(data, currentPosition, data.Yaw, data.Pitch, data.Roll)
+			pivotVehicleToMain(data, stopMainCFrame)
 		end
 
-		vehicle:PivotTo(candidatePivot)
-
-		local moving =
-			math.abs(data.ForwardSpeed) > 1
-			or math.abs(data.SideSpeed) > 1
-			or math.abs(data.VerticalSpeed) > 1
-			or math.abs(yawInput) > 0.05
-
-		local targetRotorSpeed = 0
+		local rotorTarget = 0
 		if hasPilot then
-			if moving or canFly then
-				targetRotorSpeed = rotorFlightSpeed
-			else
-				targetRotorSpeed = rotorIdleSpeed
-			end
+			local movementAmount = math.clamp((math.abs(data.ForwardSpeed) + math.abs(data.SideSpeed) + math.abs(data.VerticalSpeed)) / math.max(maxSpeed, 1), 0, 1)
+			rotorTarget = rotorIdleSpeed + (rotorFlightSpeed - rotorIdleSpeed) * movementAmount
+		else
+			rotorTarget = 0
 		end
 
-		data.RotorSpeed = expApproach(data.RotorSpeed, targetRotorSpeed, rotorSmooth, dt)
-		rotatePartAroundOwnAxis(data.MainRotor, mainRotorAxis, mainRotorSign, data.RotorSpeed * dt)
-		rotatePartAroundOwnAxis(data.TailRotor, tailRotorAxis, tailRotorSign, data.RotorSpeed * dt)
+		data.RotorSpeed = approach(data.RotorSpeed, rotorTarget, math.max(rotorSmooth, 1) * rotorFlightSpeed, dt)
 
-		if maxFuel > 0 and currentFuel > 0 and moving then
-			vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
-		end
+		local mainRotorAxis = getStringAttr(vehicle, "MainRotor_axis", "Y")
+		local mainRotorSign = getNumberAttr(vehicle, "MainRotor_axis_sign", 1)
+		local tailRotorAxis = getStringAttr(vehicle, "TailRotor_axis", "Z")
+		local tailRotorSign = getNumberAttr(vehicle, "TailRotor_axis_sign", 1)
+
+		spinPart(data.MainRotor, mainRotorAxis, mainRotorSign, data.RotorSpeed * dt)
+		spinPart(data.TailRotor, tailRotorAxis, tailRotorSign, data.RotorSpeed * dt * 1.4)
 	end
 end)
 

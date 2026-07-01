@@ -165,20 +165,19 @@ RunService.Heartbeat:Connect(function(dt)
 		local newPosition = main.Position + data.Velocity * dt
 		local targetCFrame = CFrame.new(newPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
 
-		if canMoveTo(vehicle, targetCFrame) then
-			vehicle:PivotTo(targetCFrame)
-		else
-			local horizontalPosition = Vector3.new(newPosition.X, main.Position.Y, newPosition.Z)
-			local horizontalCFrame = CFrame.new(horizontalPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
+		if data.Velocity.Y < -0.1 then
+	if canMoveTo(vehicle, targetCFrame) then
+		vehicle:PivotTo(targetCFrame)
+	else
+		local horizontalPosition = Vector3.new(newPosition.X, main.Position.Y, newPosition.Z)
+		local horizontalCFrame = CFrame.new(horizontalPosition) * CFrame.Angles(0, math.rad(data.Yaw), 0)
 
-			if canMoveTo(vehicle, horizontalCFrame) then
-				vehicle:PivotTo(horizontalCFrame)
-			end
-
-			if data.Velocity.Y < 0 then
-				data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
-			end
-		end
+		vehicle:PivotTo(horizontalCFrame)
+		data.Velocity = Vector3.new(data.Velocity.X, 0, data.Velocity.Z)
+	end
+	else
+		vehicle:PivotTo(targetCFrame)
+	end
 
 		if maxFuel > 0 and currentFuel > 0 then
 			local moving = data.Velocity.Magnitude > 0.5

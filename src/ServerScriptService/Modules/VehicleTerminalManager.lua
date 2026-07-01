@@ -3,13 +3,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local VehicleSpawner = require(script.Parent.VehicleSpawner)
 local WarehouseManager = require(script.Parent.WarehouseManager)
+local VehicleCatalog = require(script.Parent.VehicleCatalog)
+local VehicleAccess = require(script.Parent.VehicleAccess)
 
 local VehicleTerminalManager = {}
 
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
 
 local PROMPT_ACTION_TEXT = "Open"
-local PROMPT_OBJECT_TEXT = "Vehicle Terminal"
 local PROMPT_KEY = Enum.KeyCode.E
 
 local function getBaseObjectsFolder()
@@ -24,8 +25,17 @@ local function getSpawnRemote()
 	return getRemotesFolder():WaitForChild("VehicleSpawnRequest")
 end
 
-local function isVehicleTerminal(object)
-	return object:IsA("Model") and object:GetAttribute("ObjectType") == "VehicleTerminal"
+local function getTerminalConfig(object)
+	if not object:IsA("Model") then
+		return nil
+	end
+
+	local objectType = object:GetAttribute("ObjectType")
+	return VehicleCatalog.GetTerminalConfig(objectType)
+end
+
+local function isKnownTerminal(object)
+	return getTerminalConfig(object) ~= nil
 end
 
 local function getScreen(object)
@@ -38,8 +48,8 @@ local function getScreen(object)
 	return nil
 end
 
-local function getWSpawn(object)
-	local spawnPart = object:FindFirstChild("WSpawn", true)
+local function getSpawnPart(object, spawnPartName)
+	local spawnPart = object:FindFirstChild(spawnPartName, true)
 
 	if spawnPart and spawnPart:IsA("BasePart") then
 		return spawnPart
@@ -48,75 +58,18 @@ local function getWSpawn(object)
 	return nil
 end
 
-local function getPlayerTeamOwner(player)
-	local attr = player:GetAttribute("TeamOwner")
-	if attr ~= nil then
-		return attr
+local function getVehicleTemplate(folderName, vehicleName)
+	local folder = ReplicatedStorage:FindFirstChild(folderName)
+
+	if not folder then
+		return nil
 	end
 
-	local teamValue = player:GetAttribute("Team")
-	if teamValue ~= nil then
-		return teamValue
-	end
-
-	if player.Team then
-		local teamAttr = player.Team:GetAttribute("TeamOwner")
-		if teamAttr ~= nil then
-			return teamAttr
-		end
-
-		local teamNumber = tonumber(player.Team.Name)
-		if teamNumber then
-			return teamNumber
-		end
-
-		local lowerName = string.lower(player.Team.Name)
-
-		if lowerName == "red" or lowerName == "червоні" or lowerName == "червона" then
-			return 1
-		end
-
-		if lowerName == "blue" or lowerName == "сині" or lowerName == "синя" then
-			return 2
-		end
-	end
-
-	return nil
+	return folder:FindFirstChild(vehicleName)
 end
 
-local function canUseTerminal(player, terminal)
-	local playerTeamOwner = getPlayerTeamOwner(player)
-	local terminalTeamOwner = terminal:GetAttribute("TeamOwner")
-
-	if terminalTeamOwner == nil then
-		warn("[VehicleTerminalManager] Terminal has no TeamOwner:", terminal:GetFullName())
-		return false
-	end
-
-	if playerTeamOwner == nil then
-		warn("[VehicleTerminalManager] Player has no TeamOwner:", player.Name)
-		return false
-	end
-
-	if tonumber(playerTeamOwner) ~= tonumber(terminalTeamOwner) then
-		warn(
-			"[VehicleTerminalManager] Wrong team terminal denied:",
-			player.Name,
-			"PlayerTeamOwner:",
-			playerTeamOwner,
-			"TerminalTeamOwner:",
-			terminalTeamOwner
-		)
-
-		return false
-	end
-
-	return true
-end
-
-local function getVehiclePrice(vehicleName)
-	local vehiclesFolder = ReplicatedStorage:WaitForChild("Vehicles")
-	local template = vehiclesFolder:FindFirstChild(vehicleName)
+local function getVehiclePrice(folderName, vehicleName)
+	local template = getVehicleTemplate(folderName, vehicleName)
 
 	if not template then
 		return nil
@@ -126,7 +79,9 @@ local function getVehiclePrice(vehicleName)
 end
 
 local function setupPrompt(object)
-	if not isVehicleTerminal(object) then
+	local config = getTerminalConfig(object)
+
+	if not config then
 		return
 	end
 
@@ -145,7 +100,7 @@ local function setupPrompt(object)
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "VehicleTerminalPrompt"
 	prompt.ActionText = PROMPT_ACTION_TEXT
-	prompt.ObjectText = PROMPT_OBJECT_TEXT
+	prompt.ObjectText = config.PromptText or "Vehicle Terminal"
 	prompt.KeyboardKeyCode = PROMPT_KEY
 	prompt.HoldDuration = 0
 	prompt.MaxActivationDistance = 10
@@ -153,9 +108,9 @@ local function setupPrompt(object)
 	prompt.Parent = screen
 
 	prompt.Triggered:Connect(function(player)
-		print("[VehicleTerminal] Open requested by", player.Name)
+		print("[VehicleTerminal] Open requested by", player.Name, "Terminal:", object.Name)
 
-		if not canUseTerminal(player, object) then
+		if not VehicleAccess.CanUseTeamObject(player, object) then
 			return
 		end
 
@@ -176,30 +131,48 @@ local function spawnRequested(player, terminal, vehicleName)
 		return
 	end
 
-	if not isVehicleTerminal(terminal) then
+	local objectType = terminal:GetAttribute("ObjectType")
+	local config = VehicleCatalog.GetTerminalConfig(objectType)
+
+	if not config then
+		warn("[VehicleTerminalManager] Unknown terminal ObjectType:", tostring(objectType))
 		return
 	end
 
-	if not canUseTerminal(player, terminal) then
+	if not VehicleAccess.CanUseTeamObject(player, terminal) then
 		return
 	end
 
-	if vehicleName ~= "Cargo" then
-		warn("[VehicleTerminalManager] Unknown vehicle requested:", vehicleName)
+	if not VehicleCatalog.IsAllowed(objectType, vehicleName) then
+		warn(
+			"[VehicleTerminalManager] Vehicle not allowed:",
+			vehicleName,
+			"TerminalType:",
+			tostring(objectType)
+		)
 		return
 	end
 
-	local spawnPart = getWSpawn(terminal)
+	local spawnPart = getSpawnPart(terminal, config.SpawnPartName)
 
 	if not spawnPart then
-		warn("[VehicleTerminalManager] WSpawn not found:", terminal:GetFullName())
+		warn(
+			"[VehicleTerminalManager] Spawn part not found:",
+			config.SpawnPartName,
+			"Terminal:",
+			terminal:GetFullName()
+		)
 		return
 	end
 
-	local price = getVehiclePrice(vehicleName)
+	local price = getVehiclePrice(config.FolderName, vehicleName)
 
 	if price == nil then
-		warn("[VehicleTerminalManager] Vehicle template not found:", vehicleName)
+		warn(
+			"[VehicleTerminalManager] Vehicle template not found:",
+			config.FolderName,
+			vehicleName
+		)
 		return
 	end
 
@@ -215,7 +188,13 @@ local function spawnRequested(player, terminal, vehicleName)
 
 	local teamOwner = terminal:GetAttribute("TeamOwner") or 0
 
-	VehicleSpawner.SpawnVehicle(player, vehicleName, spawnPart.CFrame, teamOwner)
+	VehicleSpawner.SpawnVehicle(
+		player,
+		config.FolderName,
+		vehicleName,
+		spawnPart.CFrame,
+		teamOwner
+	)
 end
 
 function VehicleTerminalManager.SetupAll()
@@ -227,7 +206,9 @@ function VehicleTerminalManager.SetupAll()
 	end
 
 	for _, object in ipairs(folder:GetChildren()) do
-		setupPrompt(object)
+		if isKnownTerminal(object) then
+			setupPrompt(object)
+		end
 	end
 end
 
@@ -241,7 +222,10 @@ function VehicleTerminalManager.StartAutoSetup()
 
 	folder.ChildAdded:Connect(function(child)
 		task.wait(0.1)
-		setupPrompt(child)
+
+		if isKnownTerminal(child) then
+			setupPrompt(child)
+		end
 	end)
 end
 

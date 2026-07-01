@@ -3,11 +3,12 @@ local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 
 local VehicleDriveController = require(script.Parent.VehicleDriveController)
+local HelicopterDriveController = require(script.Parent.HelicopterDriveController)
 local TeamColors = require(script.Parent.TeamColors)
+local VehicleAccess = require(script.Parent.VehicleAccess)
 
 local VehicleSpawner = {}
 
-local VEHICLES_FOLDER_NAME = "Vehicles"
 local ACTIVE_VEHICLES_FOLDER_NAME = "ActiveVehicles"
 
 local function getActiveVehiclesFolder()
@@ -20,42 +21,6 @@ local function getActiveVehiclesFolder()
 	end
 
 	return folder
-end
-
-local function getPlayerTeamOwner(player)
-	local attr = player:GetAttribute("TeamOwner")
-	if attr ~= nil then
-		return attr
-	end
-
-	local teamValue = player:GetAttribute("Team")
-	if teamValue ~= nil then
-		return teamValue
-	end
-
-	if player.Team then
-		local teamAttr = player.Team:GetAttribute("TeamOwner")
-		if teamAttr ~= nil then
-			return teamAttr
-		end
-
-		local teamNumber = tonumber(player.Team.Name)
-		if teamNumber then
-			return teamNumber
-		end
-
-		local lowerName = string.lower(player.Team.Name)
-
-		if lowerName == "red" or lowerName == "червоні" or lowerName == "червона" then
-			return 1
-		end
-
-		if lowerName == "blue" or lowerName == "сині" or lowerName == "синя" then
-			return 2
-		end
-	end
-
-	return nil
 end
 
 local function getTeamColorPart(vehicle)
@@ -71,11 +36,11 @@ end
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
 
-	if seat and seat:IsA("Seat") then
+	if seat and seat:IsA("VehicleSeat") then
 		return seat
 	end
 
-	if seat and seat:IsA("VehicleSeat") then
+	if seat and seat:IsA("Seat") then
 		return seat
 	end
 
@@ -104,12 +69,22 @@ local function prepareVehicle(vehicle)
 	end
 end
 
+local function unregisterAnyVehicle(vehicle)
+	local vehicleType = vehicle:GetAttribute("VehicleType")
+
+	if vehicleType == "Helicopter" then
+		HelicopterDriveController.UnregisterVehicle(vehicle)
+	else
+		VehicleDriveController.UnregisterVehicle(vehicle)
+	end
+end
+
 local function removeOldVehicleForPlayer(player)
 	local folder = getActiveVehiclesFolder()
 
 	for _, vehicle in ipairs(folder:GetChildren()) do
 		if vehicle:GetAttribute("OwnerUserId") == player.UserId then
-			VehicleDriveController.UnregisterVehicle(vehicle)
+			unregisterAnyVehicle(vehicle)
 			vehicle:Destroy()
 
 			print("[VehicleSpawner] Old vehicle removed for:", player.Name)
@@ -142,7 +117,7 @@ local function protectDriverSeat(vehicle)
 
 		local ownerUserId = vehicle:GetAttribute("OwnerUserId")
 		local vehicleTeamOwner = vehicle:GetAttribute("TeamOwner")
-		local playerTeamOwner = getPlayerTeamOwner(player)
+		local playerTeamOwner = VehicleAccess.GetPlayerTeamOwner(player)
 
 		if ownerUserId ~= player.UserId then
 			print("[VehicleSpawner] Seat access denied:", player.Name, "tried to steal", vehicle.Name)
@@ -156,7 +131,7 @@ local function protectDriverSeat(vehicle)
 			return
 		end
 
-		print("my_summer_car")
+		print("[VehicleSpawner] Driver accepted:", player.Name, vehicle.Name)
 	end)
 end
 
@@ -181,8 +156,36 @@ local function seatOwner(player, vehicle)
 	driverSeat:Sit(humanoid)
 end
 
-function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner)
-	local playerTeamOwner = getPlayerTeamOwner(player)
+local function getTemplate(folderName, vehicleName)
+	local folder = ReplicatedStorage:FindFirstChild(folderName)
+
+	if not folder then
+		warn("[VehicleSpawner] Folder not found in ReplicatedStorage:", folderName)
+		return nil
+	end
+
+	local template = folder:FindFirstChild(vehicleName)
+
+	if not template then
+		warn("[VehicleSpawner] Vehicle template not found:", folderName, vehicleName)
+		return nil
+	end
+
+	return template
+end
+
+local function registerController(vehicle, player)
+	local vehicleType = vehicle:GetAttribute("VehicleType")
+
+	if vehicleType == "Helicopter" then
+		HelicopterDriveController.RegisterVehicle(vehicle, player)
+	else
+		VehicleDriveController.RegisterVehicle(vehicle, player)
+	end
+end
+
+function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFrame, teamOwner)
+	local playerTeamOwner = VehicleAccess.GetPlayerTeamOwner(player)
 
 	if playerTeamOwner == nil then
 		warn("[VehicleSpawner] Spawn denied: player has no TeamOwner:", player.Name)
@@ -202,11 +205,8 @@ function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner
 		return nil
 	end
 
-	local vehiclesFolder = ReplicatedStorage:WaitForChild(VEHICLES_FOLDER_NAME)
-	local template = vehiclesFolder:FindFirstChild(vehicleName)
-
+	local template = getTemplate(folderName, vehicleName)
 	if not template then
-		warn("[VehicleSpawner] Vehicle template not found:", vehicleName)
 		return nil
 	end
 
@@ -244,9 +244,18 @@ function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner
 	paintVehicle(vehicle, teamOwner or 0)
 	protectDriverSeat(vehicle)
 	seatOwner(player, vehicle)
-	VehicleDriveController.RegisterVehicle(vehicle, player)
+	registerController(vehicle, player)
 
-	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Owner:", player.Name, "TeamOwner:", teamOwner)
+	print(
+		"[VehicleSpawner] Spawned vehicle:",
+		vehicle.Name,
+		"Folder:",
+		folderName,
+		"Owner:",
+		player.Name,
+		"TeamOwner:",
+		teamOwner
+	)
 
 	return vehicle
 end

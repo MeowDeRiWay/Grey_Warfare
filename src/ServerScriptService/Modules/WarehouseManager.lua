@@ -58,18 +58,18 @@ local function isVehicle(model)
 		and model:GetAttribute("TeamOwner") ~= nil
 end
 
-local function isOnPart(vehicle, part)
-	local main = getMain(vehicle)
-	if not main or not part then
+local function isVehicleTouchingPart(vehicle, part)
+	if not vehicle or not part then
 		return false
 	end
 
-	local relative = part.CFrame:PointToObjectSpace(main.Position)
-	local size = part.Size
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { vehicle }
 
-	return math.abs(relative.X) <= size.X / 2
-		and math.abs(relative.Z) <= size.Z / 2
-		and math.abs(relative.Y) <= 12
+	local touchingParts = Workspace:GetPartsInPart(part, params)
+
+	return #touchingParts > 0
 end
 
 local function registerObject(object)
@@ -168,7 +168,6 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 
 	local vehicleCurrent = tonumber(vehicle:GetAttribute("Current_cargo")) or 0
 	local vehicleMax = tonumber(vehicle:GetAttribute("Max_cargo")) or 0
-
 	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 
 	if vehicleMax <= 0 or vehicleCurrent >= vehicleMax or warehouseCurrent <= 0 then
@@ -192,13 +191,12 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 	end
 
 	local vehicleCurrent = tonumber(vehicle:GetAttribute("Current_cargo")) or 0
+	local vehicleMax = tonumber(vehicle:GetAttribute("Max_cargo")) or 0
 
 	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 	local warehouseMax = tonumber(warehouse:GetAttribute("Max_cargo")) or 0
 
-	local vehicleMax = tonumber(vehicle:GetAttribute("Max_cargo")) or 0
-
-	if vehicleCurrent <= 0 or warehouseMax <= 0 or warehouseCurrent >= warehouseMax then
+	if vehicleCurrent <= 0 or vehicleMax <= 0 or warehouseMax <= 0 or warehouseCurrent >= warehouseMax then
 		return
 	end
 
@@ -252,11 +250,11 @@ local function processWarehouses(vehicle, dt)
 			local addCargo = getPart(warehouse, "add_cargo")
 			local getCargo = getPart(warehouse, "get_cargo")
 
-			if addCargo and isOnPart(vehicle, addCargo) then
+			if addCargo and isVehicleTouchingPart(vehicle, addCargo) then
 				loadVehicleFromWarehouse(vehicle, warehouse, dt)
 			end
 
-			if getCargo and isOnPart(vehicle, getCargo) then
+			if getCargo and isVehicleTouchingPart(vehicle, getCargo) then
 				unloadVehicleToWarehouse(vehicle, warehouse, dt)
 			end
 		end
@@ -268,7 +266,7 @@ local function processFuelStations(vehicle, dt)
 		if fuelStation.Parent then
 			local addFuel = getPart(fuelStation, "add_fuel")
 
-			if addFuel and isOnPart(vehicle, addFuel) then
+			if addFuel and isVehicleTouchingPart(vehicle, addFuel) then
 				refuelVehicle(vehicle, fuelStation, dt)
 			end
 		end

@@ -36,18 +36,22 @@ end
 
 local function getConfig(vehicle)
 	return {
-		Speed = getAttr(vehicle, "Speed", 40),
-		Speed_reverse = getAttr(vehicle, "Speed_reverse", 10),
+		Speed = getAttr(vehicle, "Speed"),
+		Speed_reverse = getAttr(vehicle, "Speed_reverse"),
 
-		Acceleration = getAttr(vehicle, "Acceleration", 10),
-		Brake_force = getAttr(vehicle, "Brake_force", 15),
+		Acceleration = getAttr(vehicle, "Acceleration"),
+		Brake_force = getAttr(vehicle, "Brake_force"),
 
-		Steer_angle = getAttr(vehicle, "Steer_angle", 28),
-		Steer_speed = getAttr(vehicle, "Steer_speed", 7),
+		Steer_angle = getAttr(vehicle, "Steer_angle"),
+		Steer_speed = getAttr(vehicle, "Steer_speed"),
 
-		Flip_force = getAttr(vehicle, "Flip_force", 4500),
-		Flip_time = getAttr(vehicle, "Flip_time", 2),
-		Can_flip = getAttr(vehicle, "Can_flip", true),
+		Suspension_force = getAttr(vehicle, "Suspension_force"),
+		Suspension_damping = getAttr(vehicle, "Suspension_damping"),
+		Suspension_height = getAttr(vehicle, "Suspension_height"),
+
+		Flip_force = getAttr(vehicle, "Flip_force"),
+		Flip_time = getAttr(vehicle, "Flip_time"),
+		Can_flip = getAttr(vehicle, "Can_flip"),
 	}
 end
 

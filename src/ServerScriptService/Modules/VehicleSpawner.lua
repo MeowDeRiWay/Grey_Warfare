@@ -25,31 +25,22 @@ end
 
 local function getTeamColorPart(vehicle)
 	local part = vehicle:FindFirstChild("Team_color", true)
-
 	if part and part:IsA("BasePart") then
 		return part
 	end
-
 	return nil
 end
 
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
-
-	if seat and seat:IsA("VehicleSeat") then
+	if seat and (seat:IsA("VehicleSeat") or seat:IsA("Seat")) then
 		return seat
 	end
-
-	if seat and seat:IsA("Seat") then
-		return seat
-	end
-
 	return nil
 end
 
 local function paintVehicle(vehicle, teamOwner)
 	local colorPart = getTeamColorPart(vehicle)
-
 	if colorPart then
 		colorPart.Color = TeamColors.GetColor(teamOwner)
 	end
@@ -70,9 +61,7 @@ local function prepareVehicle(vehicle)
 end
 
 local function unregisterAnyVehicle(vehicle)
-	local vehicleType = vehicle:GetAttribute("VehicleType")
-
-	if vehicleType == "Helicopter" then
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
 		HelicopterDriveController.UnregisterVehicle(vehicle)
 	else
 		VehicleDriveController.UnregisterVehicle(vehicle)
@@ -86,7 +75,6 @@ local function removeOldVehicleForPlayer(player)
 		if vehicle:GetAttribute("OwnerUserId") == player.UserId then
 			unregisterAnyVehicle(vehicle)
 			vehicle:Destroy()
-
 			print("[VehicleSpawner] Old vehicle removed for:", player.Name)
 		end
 	end
@@ -96,20 +84,15 @@ local function protectDriverSeat(vehicle)
 	local driverSeat = getDriverSeat(vehicle)
 
 	if not driverSeat then
-		warn("[VehicleSpawner] Driver_seat not found or is not Seat/VehicleSeat:", vehicle.Name)
+		warn("[VehicleSpawner] Driver_seat not found:", vehicle.Name)
 		return
 	end
 
 	driverSeat:GetPropertyChangedSignal("Occupant"):Connect(function()
 		local humanoid = driverSeat.Occupant
+		if not humanoid then return end
 
-		if not humanoid then
-			return
-		end
-
-		local character = humanoid.Parent
-		local player = Players:GetPlayerFromCharacter(character)
-
+		local player = Players:GetPlayerFromCharacter(humanoid.Parent)
 		if not player then
 			humanoid.Sit = false
 			return
@@ -120,13 +103,11 @@ local function protectDriverSeat(vehicle)
 		local playerTeamOwner = VehicleAccess.GetPlayerTeamOwner(player)
 
 		if ownerUserId ~= player.UserId then
-			print("[VehicleSpawner] Seat access denied:", player.Name, "tried to steal", vehicle.Name)
 			humanoid.Sit = false
 			return
 		end
 
 		if tonumber(vehicleTeamOwner) ~= tonumber(playerTeamOwner) then
-			print("[VehicleSpawner] Seat team denied:", player.Name, "vehicle:", vehicleTeamOwner, "player:", playerTeamOwner)
 			humanoid.Sit = false
 			return
 		end
@@ -137,20 +118,13 @@ end
 
 local function seatOwner(player, vehicle)
 	local driverSeat = getDriverSeat(vehicle)
-
-	if not driverSeat then
-		return
-	end
+	if not driverSeat then return end
 
 	local character = player.Character
-	if not character then
-		return
-	end
+	if not character then return end
 
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return
-	end
+	if not humanoid then return end
 
 	task.wait(0.15)
 	driverSeat:Sit(humanoid)
@@ -158,14 +132,12 @@ end
 
 local function getTemplate(folderName, vehicleName)
 	local folder = ReplicatedStorage:FindFirstChild(folderName)
-
 	if not folder then
-		warn("[VehicleSpawner] Folder not found in ReplicatedStorage:", folderName)
+		warn("[VehicleSpawner] Folder not found:", folderName)
 		return nil
 	end
 
 	local template = folder:FindFirstChild(vehicleName)
-
 	if not template then
 		warn("[VehicleSpawner] Vehicle template not found:", folderName, vehicleName)
 		return nil
@@ -175,13 +147,22 @@ local function getTemplate(folderName, vehicleName)
 end
 
 local function registerController(vehicle, player)
-	local vehicleType = vehicle:GetAttribute("VehicleType")
-
-	if vehicleType == "Helicopter" then
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
 		HelicopterDriveController.RegisterVehicle(vehicle, player)
 	else
 		VehicleDriveController.RegisterVehicle(vehicle, player)
 	end
+end
+
+local function getSpawnOffsetY(vehicle)
+	local vehicleSize = vehicle:GetExtentsSize()
+	local offset = (vehicleSize.Y / 2) + 0.2
+
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+		offset += tonumber(vehicle:GetAttribute("Spawn_height_bonus")) or 12
+	end
+
+	return offset
 end
 
 function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFrame, teamOwner)
@@ -193,22 +174,12 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	end
 
 	if tonumber(playerTeamOwner) ~= tonumber(teamOwner) then
-		warn(
-			"[VehicleSpawner] Spawn denied: wrong team:",
-			player.Name,
-			"PlayerTeamOwner:",
-			playerTeamOwner,
-			"SpawnTeamOwner:",
-			teamOwner
-		)
-
+		warn("[VehicleSpawner] Spawn denied: wrong team:", player.Name)
 		return nil
 	end
 
 	local template = getTemplate(folderName, vehicleName)
-	if not template then
-		return nil
-	end
+	if not template then return nil end
 
 	removeOldVehicleForPlayer(player)
 
@@ -233,10 +204,7 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	vehicle.Parent = getActiveVehiclesFolder()
 
 	if vehicle.PrimaryPart then
-		local vehicleSize = vehicle:GetExtentsSize()
-		local spawnOffsetY = (vehicleSize.Y / 2) + 0.2
-
-		vehicle:PivotTo(spawnCFrame + Vector3.new(0, spawnOffsetY, 0))
+		vehicle:PivotTo(spawnCFrame + Vector3.new(0, getSpawnOffsetY(vehicle), 0))
 	else
 		warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
 	end
@@ -246,16 +214,7 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	seatOwner(player, vehicle)
 	registerController(vehicle, player)
 
-	print(
-		"[VehicleSpawner] Spawned vehicle:",
-		vehicle.Name,
-		"Folder:",
-		folderName,
-		"Owner:",
-		player.Name,
-		"TeamOwner:",
-		teamOwner
-	)
+	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Folder:", folderName)
 
 	return vehicle
 end

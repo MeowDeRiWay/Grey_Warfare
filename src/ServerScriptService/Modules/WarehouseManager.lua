@@ -9,8 +9,19 @@ local ACTIVE_VEHICLES_FOLDER_NAME = "ActiveVehicles"
 local CARGO_TRANSFER_RATE = 0.05 -- 5% Max_cargo / sec
 local FUEL_TRANSFER_RATE = 0.10 -- 10% Max_fuel / sec
 
+local DEFAULT_TOUCH_RADIUS = 8
+local DEFAULT_FUEL_WAREHOUSE_RADIUS = 100
+
+local DEBUG = true
+
 local warehouses = {}
 local fuelStations = {}
+
+local function dprint(...)
+	if DEBUG then
+		print(...)
+	end
+end
 
 local function getBaseObjectsFolder()
 	return Workspace:FindFirstChild(BASE_OBJECTS_FOLDER_NAME)
@@ -25,7 +36,12 @@ local function getMain(model)
 	if main and main:IsA("BasePart") then
 		return main
 	end
-	return nil
+
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+
+	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function getPart(model, partName)
@@ -53,23 +69,37 @@ end
 
 local function isVehicle(model)
 	return model:IsA("Model")
-		and model:GetAttribute("Max_cargo") ~= nil
-		and model:GetAttribute("Current_cargo") ~= nil
 		and model:GetAttribute("TeamOwner") ~= nil
+		and (
+			model:GetAttribute("Max_cargo") ~= nil
+			or model:GetAttribute("Max_fuel") ~= nil
+		)
 end
 
-local function isVehicleTouchingPart(vehicle, part)
-	if not vehicle or not part then
+local function isVehicleNearPart(vehicle, part)
+	local vehicleMain = getMain(vehicle)
+	if not vehicleMain or not part then
 		return false
+	end
+
+	local radius = tonumber(part:GetAttribute("Transfer_radius"))
+		or tonumber(part:GetAttribute("Touch_radius"))
+		or DEFAULT_TOUCH_RADIUS
+
+	local distance = (vehicleMain.Position - part.Position).Magnitude
+	if distance <= radius then
+		return true
 	end
 
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
 	params.FilterDescendantsInstances = { vehicle }
 
-	local touchingParts = Workspace:GetPartsInPart(part, params)
+	local ok, touchingParts = pcall(function()
+		return Workspace:GetPartsInPart(part, params)
+	end)
 
-	return #touchingParts > 0
+	return ok and #touchingParts > 0
 end
 
 local function registerObject(object)
@@ -81,10 +111,10 @@ local function registerObject(object)
 
 	if objectType == "Warehouse" then
 		warehouses[object] = true
-		print("[WarehouseManager] Warehouse registered:", object.Name)
+		dprint("[WarehouseManager] Warehouse registered:", object.Name)
 	elseif objectType == "FuelStation" then
 		fuelStations[object] = true
-		print("[WarehouseManager] FuelStation registered:", object.Name)
+		dprint("[WarehouseManager] FuelStation registered:", object.Name)
 	end
 end
 
@@ -99,9 +129,12 @@ function WarehouseManager.FindWarehouseNear(sourceModel)
 		return nil
 	end
 
-	local radius = tonumber(sourceModel:GetAttribute("Cargo_radius")) or 0
+	local radius = tonumber(sourceModel:GetAttribute("Cargo_radius"))
+		or tonumber(sourceModel:GetAttribute("Warehouse_radius"))
+		or DEFAULT_FUEL_WAREHOUSE_RADIUS
+
 	if radius <= 0 then
-		return nil
+		radius = DEFAULT_FUEL_WAREHOUSE_RADIUS
 	end
 
 	local bestWarehouse = nil
@@ -183,6 +216,8 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 
 	vehicle:SetAttribute("Current_cargo", vehicleCurrent + transfer)
 	warehouse:SetAttribute("Current_cargo", warehouseCurrent - transfer)
+
+	dprint("[WarehouseManager] LOAD cargo:", vehicle.Name, "+", transfer)
 end
 
 local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
@@ -209,6 +244,8 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 
 	vehicle:SetAttribute("Current_cargo", vehicleCurrent - transfer)
 	warehouse:SetAttribute("Current_cargo", warehouseCurrent + transfer)
+
+	dprint("[WarehouseManager] UNLOAD cargo:", vehicle.Name, "-", transfer)
 end
 
 local function refuelVehicle(vehicle, fuelStation, dt)
@@ -218,6 +255,7 @@ local function refuelVehicle(vehicle, fuelStation, dt)
 
 	local warehouse = WarehouseManager.FindWarehouseNear(fuelStation)
 	if not warehouse then
+		dprint("[WarehouseManager] No warehouse near fuel station:", fuelStation.Name)
 		return
 	end
 
@@ -230,6 +268,7 @@ local function refuelVehicle(vehicle, fuelStation, dt)
 
 	local warehouseCargo = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 	if warehouseCargo <= 0 then
+		dprint("[WarehouseManager] Warehouse has no cargo for fuel:", warehouse.Name)
 		return
 	end
 
@@ -242,6 +281,8 @@ local function refuelVehicle(vehicle, fuelStation, dt)
 
 	vehicle:SetAttribute("Current_fuel", currentFuel + fuelToAdd)
 	warehouse:SetAttribute("Current_cargo", warehouseCargo - fuelToAdd)
+
+	dprint("[WarehouseManager] REFUEL:", vehicle.Name, "+", fuelToAdd)
 end
 
 local function processWarehouses(vehicle, dt)
@@ -250,11 +291,11 @@ local function processWarehouses(vehicle, dt)
 			local addCargo = getPart(warehouse, "add_cargo")
 			local getCargo = getPart(warehouse, "get_cargo")
 
-			if addCargo and isVehicleTouchingPart(vehicle, addCargo) then
+			if addCargo and isVehicleNearPart(vehicle, addCargo) then
 				loadVehicleFromWarehouse(vehicle, warehouse, dt)
 			end
 
-			if getCargo and isVehicleTouchingPart(vehicle, getCargo) then
+			if getCargo and isVehicleNearPart(vehicle, getCargo) then
 				unloadVehicleToWarehouse(vehicle, warehouse, dt)
 			end
 		end
@@ -266,7 +307,7 @@ local function processFuelStations(vehicle, dt)
 		if fuelStation.Parent then
 			local addFuel = getPart(fuelStation, "add_fuel")
 
-			if addFuel and isVehicleTouchingPart(vehicle, addFuel) then
+			if addFuel and isVehicleNearPart(vehicle, addFuel) then
 				refuelVehicle(vehicle, fuelStation, dt)
 			end
 		end

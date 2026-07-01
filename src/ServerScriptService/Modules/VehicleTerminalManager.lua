@@ -2,6 +2,7 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local VehicleSpawner = require(script.Parent.VehicleSpawner)
+local WarehouseManager = require(script.Parent.WarehouseManager)
 
 local VehicleTerminalManager = {}
 
@@ -113,6 +114,17 @@ local function canUseTerminal(player, terminal)
 	return true
 end
 
+local function getVehiclePrice(vehicleName)
+	local vehiclesFolder = ReplicatedStorage:WaitForChild("Vehicles")
+	local template = vehiclesFolder:FindFirstChild(vehicleName)
+
+	if not template then
+		return nil
+	end
+
+	return tonumber(template:GetAttribute("VPrice")) or 0
+end
+
 local function setupPrompt(object)
 	if not isVehicleTerminal(object) then
 		return
@@ -184,6 +196,23 @@ local function spawnRequested(player, terminal, vehicleName)
 		return
 	end
 
+	local price = getVehiclePrice(vehicleName)
+
+	if price == nil then
+		warn("[VehicleTerminalManager] Vehicle template not found:", vehicleName)
+		return
+	end
+
+	if not WarehouseManager.CanPayCargo(terminal, price) then
+		warn("[VehicleTerminalManager] Not enough cargo for vehicle:", vehicleName, "Price:", price)
+		return
+	end
+
+	if not WarehouseManager.PayCargo(terminal, price) then
+		warn("[VehicleTerminalManager] Failed to pay cargo for vehicle:", vehicleName, "Price:", price)
+		return
+	end
+
 	local teamOwner = terminal:GetAttribute("TeamOwner") or 0
 
 	VehicleSpawner.SpawnVehicle(player, vehicleName, spawnPart.CFrame, teamOwner)
@@ -221,6 +250,5 @@ function VehicleTerminalManager.StartRemoteListener()
 		spawnRequested(player, terminal, vehicleName)
 	end)
 end
-
 
 return VehicleTerminalManager

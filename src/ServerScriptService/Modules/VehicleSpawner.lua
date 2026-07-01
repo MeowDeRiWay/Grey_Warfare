@@ -90,7 +90,9 @@ local function protectDriverSeat(vehicle)
 
 	driverSeat:GetPropertyChangedSignal("Occupant"):Connect(function()
 		local humanoid = driverSeat.Occupant
-		if not humanoid then return end
+		if not humanoid then
+			return
+		end
 
 		local player = Players:GetPlayerFromCharacter(humanoid.Parent)
 		if not player then
@@ -118,13 +120,19 @@ end
 
 local function seatOwner(player, vehicle)
 	local driverSeat = getDriverSeat(vehicle)
-	if not driverSeat then return end
+	if not driverSeat then
+		return
+	end
 
 	local character = player.Character
-	if not character then return end
+	if not character then
+		return
+	end
 
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then return end
+	if not humanoid then
+		return
+	end
 
 	task.wait(0.15)
 	driverSeat:Sit(humanoid)
@@ -132,12 +140,14 @@ end
 
 local function getTemplate(folderName, vehicleName)
 	local folder = ReplicatedStorage:FindFirstChild(folderName)
+
 	if not folder then
 		warn("[VehicleSpawner] Folder not found:", folderName)
 		return nil
 	end
 
 	local template = folder:FindFirstChild(vehicleName)
+
 	if not template then
 		warn("[VehicleSpawner] Vehicle template not found:", folderName, vehicleName)
 		return nil
@@ -165,6 +175,18 @@ local function getSpawnOffsetY(vehicle)
 	return offset
 end
 
+local function getSpawnCFrame(vehicle, spawnCFrame)
+	local offsetY = getSpawnOffsetY(vehicle)
+	local spawnPosition = spawnCFrame.Position + Vector3.new(0, offsetY, 0)
+
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+		local yaw = tonumber(vehicle:GetAttribute("Spawn_yaw")) or 90
+		return CFrame.new(spawnPosition) * CFrame.Angles(0, math.rad(yaw), 0)
+	end
+
+	return spawnCFrame + Vector3.new(0, offsetY, 0)
+end
+
 function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFrame, teamOwner)
 	local playerTeamOwner = VehicleAccess.GetPlayerTeamOwner(player)
 
@@ -179,7 +201,9 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	end
 
 	local template = getTemplate(folderName, vehicleName)
-	if not template then return nil end
+	if not template then
+		return nil
+	end
 
 	removeOldVehicleForPlayer(player)
 
@@ -204,7 +228,7 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	vehicle.Parent = getActiveVehiclesFolder()
 
 	if vehicle.PrimaryPart then
-		vehicle:PivotTo(spawnCFrame + Vector3.new(0, getSpawnOffsetY(vehicle), 0))
+		vehicle:PivotTo(getSpawnCFrame(vehicle, spawnCFrame))
 	else
 		warn("[VehicleSpawner] Vehicle has no PrimaryPart:", vehicle.Name)
 	end

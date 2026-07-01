@@ -104,6 +104,19 @@ local function prepareVehicle(vehicle)
 	end
 end
 
+local function removeOldVehicleForPlayer(player)
+	local folder = getActiveVehiclesFolder()
+
+	for _, vehicle in ipairs(folder:GetChildren()) do
+		if vehicle:GetAttribute("OwnerUserId") == player.UserId then
+			VehicleDriveController.UnregisterVehicle(vehicle)
+			vehicle:Destroy()
+
+			print("[VehicleSpawner] Old vehicle removed for:", player.Name)
+		end
+	end
+end
+
 local function protectDriverSeat(vehicle)
 	local driverSeat = getDriverSeat(vehicle)
 
@@ -197,6 +210,8 @@ function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner
 		return nil
 	end
 
+	removeOldVehicleForPlayer(player)
+
 	local vehicle = template:Clone()
 	vehicle.Name = vehicleName .. "_" .. tostring(os.time())
 
@@ -235,6 +250,5 @@ function VehicleSpawner.SpawnVehicle(player, vehicleName, spawnCFrame, teamOwner
 
 	return vehicle
 end
-
 
 return VehicleSpawner

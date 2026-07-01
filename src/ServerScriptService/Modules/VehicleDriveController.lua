@@ -4,8 +4,15 @@ local VehicleDriveController = {}
 
 local activeVehicles = {}
 
-local DEFAULT_MAX_SPEED = 40
-local DEFAULT_TURN_SPEED = 2.5
+local function getAttr(vehicle, name, fallback)
+	local value = vehicle:GetAttribute(name)
+
+	if value == nil then
+		return fallback
+	end
+
+	return value
+end
 
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
@@ -27,10 +34,21 @@ local function getMain(vehicle)
 	return nil
 end
 
-local function getMaxSpeed(vehicle)
-	return vehicle:GetAttribute("MaxSpeed")
-		or vehicle:GetAttribute("Max_speed")
-		or DEFAULT_MAX_SPEED
+local function getConfig(vehicle)
+	return {
+		Speed = getAttr(vehicle, "Speed", 40),
+		Speed_reverse = getAttr(vehicle, "Speed_reverse", 10),
+
+		Acceleration = getAttr(vehicle, "Acceleration", 10),
+		Brake_force = getAttr(vehicle, "Brake_force", 15),
+
+		Steer_angle = getAttr(vehicle, "Steer_angle", 28),
+		Steer_speed = getAttr(vehicle, "Steer_speed", 7),
+
+		Flip_force = getAttr(vehicle, "Flip_force", 4500),
+		Flip_time = getAttr(vehicle, "Flip_time", 2),
+		Can_flip = getAttr(vehicle, "Can_flip", true),
+	}
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -53,9 +71,17 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		Main = main,
 		Seat = seat,
 		Owner = ownerPlayer,
+
+		CurrentSpeed = 0,
+		CurrentSteer = 0,
+		FlippedTime = 0,
 	}
 
 	print("[VehicleDriveController] Vehicle registered:", vehicle.Name)
+end
+
+function VehicleDriveController.UnregisterVehicle(vehicle)
+	activeVehicles[vehicle] = nil
 end
 
 RunService.Heartbeat:Connect(function(dt)
@@ -73,23 +99,90 @@ RunService.Heartbeat:Connect(function(dt)
 			continue
 		end
 
+		local cfg = getConfig(vehicle)
+
 		local throttle = seat.Throttle
 		local steer = seat.Steer
 
-		local maxSpeed = getMaxSpeed(vehicle)
+		local targetSpeed = 0
+
+		if throttle > 0 then
+			targetSpeed = cfg.Speed
+		elseif throttle < 0 then
+			targetSpeed = -cfg.Speed_reverse
+		end
+
+		local speedStep
+
+		if throttle == 0 then
+			speedStep = cfg.Brake_force * dt
+		else
+			speedStep = cfg.Acceleration * dt
+		end
+
+		if data.CurrentSpeed < targetSpeed then
+			data.CurrentSpeed = math.min(data.CurrentSpeed + speedStep, targetSpeed)
+		elseif data.CurrentSpeed > targetSpeed then
+			data.CurrentSpeed = math.max(data.CurrentSpeed - speedStep, targetSpeed)
+		end
+
+		local targetSteer = steer
+		local steerStep = cfg.Steer_speed * dt
+
+		if data.CurrentSteer < targetSteer then
+			data.CurrentSteer = math.min(data.CurrentSteer + steerStep, targetSteer)
+		elseif data.CurrentSteer > targetSteer then
+			data.CurrentSteer = math.max(data.CurrentSteer - steerStep, targetSteer)
+		end
+
 		local forward = main.CFrame.LookVector
+		local currentVelocity = main.AssemblyLinearVelocity
 
 		main.AssemblyLinearVelocity = Vector3.new(
-			forward.X * throttle * maxSpeed,
-			main.AssemblyLinearVelocity.Y,
-			forward.Z * throttle * maxSpeed
+			forward.X * data.CurrentSpeed,
+			currentVelocity.Y,
+			forward.Z * data.CurrentSpeed
 		)
 
+		local steerPower = math.rad(cfg.Steer_angle) * data.CurrentSteer
+
 		main.AssemblyAngularVelocity = Vector3.new(
-			0,
-			-steer * DEFAULT_TURN_SPEED,
-			0
+			main.AssemblyAngularVelocity.X,
+			-steerPower,
+			main.AssemblyAngularVelocity.Z
 		)
+
+		if cfg.Can_flip == true then
+			local upDot = main.CFrame.UpVector:Dot(Vector3.yAxis)
+
+			if upDot < 0.35 then
+				data.FlippedTime += dt
+			else
+				data.FlippedTime = 0
+			end
+
+			if data.FlippedTime >= cfg.Flip_time then
+				local pos = main.Position
+				local look = main.CFrame.LookVector
+				local flatLook = Vector3.new(look.X, 0, look.Z)
+
+				if flatLook.Magnitude < 0.1 then
+					flatLook = Vector3.zAxis
+				else
+					flatLook = flatLook.Unit
+				end
+
+				main.AssemblyAngularVelocity = Vector3.zero
+				main.AssemblyLinearVelocity = Vector3.new(0, 8, 0)
+				main.CFrame = CFrame.lookAt(pos + Vector3.new(0, 2, 0), pos + flatLook + Vector3.new(0, 2, 0))
+
+				data.CurrentSpeed = 0
+				data.CurrentSteer = 0
+				data.FlippedTime = 0
+
+				print("[VehicleDriveController] Vehicle flipped back:", vehicle.Name)
+			end
+		end
 	end
 end)
 

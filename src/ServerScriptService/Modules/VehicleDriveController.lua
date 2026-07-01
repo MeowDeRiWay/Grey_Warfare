@@ -4,12 +4,13 @@ local VehicleDriveController = {}
 
 local activeVehicles = {}
 
-local function getAttr(vehicle, name, fallback)
+local function getAttr(vehicle, name)
 	local value = vehicle:GetAttribute(name)
 
-	if value == nil then
-		return fallback
-	end
+	assert(
+		value ~= nil,
+		string.format("[VehicleDriveController] Vehicle '%s' has no attribute '%s'", vehicle.Name, name)
+	)
 
 	return value
 end
@@ -52,7 +53,28 @@ local function getConfig(vehicle)
 		Flip_force = getAttr(vehicle, "Flip_force"),
 		Flip_time = getAttr(vehicle, "Flip_time"),
 		Can_flip = getAttr(vehicle, "Can_flip"),
+
+		Obstacle_check_distance = getAttr(vehicle, "Obstacle_check_distance"),
 	}
+end
+
+local function isObstacleAhead(vehicle, main, direction, distance)
+	if distance <= 0 then
+		return false
+	end
+
+	if direction.Magnitude < 0.1 then
+		return false
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { vehicle }
+
+	local origin = main.Position + Vector3.new(0, 0.5, 0)
+	local result = workspace:Raycast(origin, direction.Unit * distance, params)
+
+	return result ~= nil
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -140,6 +162,19 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local forward = main.CFrame.LookVector
+		local moveDirection = forward
+
+		if data.CurrentSpeed < 0 then
+			moveDirection = -forward
+		end
+
+		if math.abs(data.CurrentSpeed) > 1 then
+			if isObstacleAhead(vehicle, main, moveDirection, cfg.Obstacle_check_distance) then
+				data.CurrentSpeed = 0
+				main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
+			end
+		end
+
 		local currentVelocity = main.AssemblyLinearVelocity
 
 		main.AssemblyLinearVelocity = Vector3.new(
@@ -159,7 +194,7 @@ RunService.Heartbeat:Connect(function(dt)
 		if cfg.Can_flip == true then
 			local upDot = main.CFrame.UpVector:Dot(Vector3.yAxis)
 
-			if upDot < 0.35 then
+			if math.abs(upDot) < 0.55 or upDot < 0 then
 				data.FlippedTime += dt
 			else
 				data.FlippedTime = 0
@@ -177,8 +212,12 @@ RunService.Heartbeat:Connect(function(dt)
 				end
 
 				main.AssemblyAngularVelocity = Vector3.zero
-				main.AssemblyLinearVelocity = Vector3.new(0, 8, 0)
-				main.CFrame = CFrame.lookAt(pos + Vector3.new(0, 2, 0), pos + flatLook + Vector3.new(0, 2, 0))
+				main.AssemblyLinearVelocity = Vector3.zero
+
+				main.CFrame = CFrame.lookAt(
+					pos + Vector3.new(0, 4, 0),
+					pos + flatLook + Vector3.new(0, 4, 0)
+				)
 
 				data.CurrentSpeed = 0
 				data.CurrentSteer = 0

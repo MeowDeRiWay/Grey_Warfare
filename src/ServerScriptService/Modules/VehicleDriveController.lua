@@ -4,24 +4,6 @@ local VehicleDriveController = {}
 
 local activeVehicles = {}
 
-local WORLD_UP = Vector3.yAxis
-
-local DEFAULTS = {
-	Speed = 40,
-	Speed_reverse = 10,
-	Acceleration = 10,
-	Brake_force = 40,
-	Steer_angle = 28,
-	Steer_speed = 7,
-	Obstacle_check_distance = 4,
-	Max_fuel = 100,
-	Fuel_per_stud = 0.01,
-	Can_flip = true,
-	Flip_time = 2,
-	Drive_forward_axis = "-X",
-	Steer_invert = true,
-}
-
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
 	if value == nil then
@@ -54,88 +36,21 @@ end
 
 local function getConfig(vehicle)
 	return {
-		Speed = tonumber(getAttr(vehicle, "Speed", DEFAULTS.Speed)) or DEFAULTS.Speed,
-		Speed_reverse = tonumber(getAttr(vehicle, "Speed_reverse", DEFAULTS.Speed_reverse)) or DEFAULTS.Speed_reverse,
+		Speed = tonumber(getAttr(vehicle, "Speed", 40)) or 40,
+		Speed_reverse = tonumber(getAttr(vehicle, "Speed_reverse", 10)) or 10,
 
-		Acceleration = tonumber(getAttr(vehicle, "Acceleration", DEFAULTS.Acceleration)) or DEFAULTS.Acceleration,
-		Brake_force = tonumber(getAttr(vehicle, "Brake_force", DEFAULTS.Brake_force)) or DEFAULTS.Brake_force,
+		Acceleration = tonumber(getAttr(vehicle, "Acceleration", 10)) or 10,
+		Brake_force = tonumber(getAttr(vehicle, "Brake_force", 40)) or 40,
 
-		Steer_angle = tonumber(getAttr(vehicle, "Steer_angle", DEFAULTS.Steer_angle)) or DEFAULTS.Steer_angle,
-		Steer_speed = tonumber(getAttr(vehicle, "Steer_speed", DEFAULTS.Steer_speed)) or DEFAULTS.Steer_speed,
-		Steer_invert = getAttr(vehicle, "Steer_invert", DEFAULTS.Steer_invert) == true,
+		Steer_angle = tonumber(getAttr(vehicle, "Steer_angle", 28)) or 28,
+		Steer_speed = tonumber(getAttr(vehicle, "Steer_speed", 7)) or 7,
+		Steer_invert = getAttr(vehicle, "Steer_invert", true),
 
-		Obstacle_check_distance = tonumber(getAttr(vehicle, "Obstacle_check_distance", DEFAULTS.Obstacle_check_distance)) or DEFAULTS.Obstacle_check_distance,
+		Obstacle_check_distance = tonumber(getAttr(vehicle, "Obstacle_check_distance", 4)) or 4,
 
-		Max_fuel = tonumber(getAttr(vehicle, "Max_fuel", DEFAULTS.Max_fuel)) or DEFAULTS.Max_fuel,
-		Fuel_per_stud = tonumber(getAttr(vehicle, "Fuel_per_stud", DEFAULTS.Fuel_per_stud)) or DEFAULTS.Fuel_per_stud,
-
-		Can_flip = getAttr(vehicle, "Can_flip", DEFAULTS.Can_flip) == true,
-		Flip_time = tonumber(getAttr(vehicle, "Flip_time", DEFAULTS.Flip_time)) or DEFAULTS.Flip_time,
-
-		Drive_forward_axis = tostring(getAttr(vehicle, "Drive_forward_axis", DEFAULTS.Drive_forward_axis)),
+		Max_fuel = tonumber(getAttr(vehicle, "Max_fuel", 100)) or 100,
+		Fuel_per_stud = tonumber(getAttr(vehicle, "Fuel_per_stud", 0.01)) or 0.01,
 	}
-end
-
-local function axisToLocalVector(axisName)
-	if axisName == "X" then
-		return Vector3.xAxis
-	elseif axisName == "-X" then
-		return -Vector3.xAxis
-	elseif axisName == "Y" then
-		return Vector3.yAxis
-	elseif axisName == "-Y" then
-		return -Vector3.yAxis
-	elseif axisName == "Z" then
-		return Vector3.zAxis
-	elseif axisName == "-Z" then
-		return -Vector3.zAxis
-	end
-
-	return -Vector3.xAxis
-end
-
-local function getForwardAttachment(vehicle)
-	local attachment = vehicle:FindFirstChild("Forward", true)
-	if attachment and attachment:IsA("Attachment") then
-		return attachment
-	end
-
-	attachment = vehicle:FindFirstChild("ForwardAttachment", true)
-	if attachment and attachment:IsA("Attachment") then
-		return attachment
-	end
-
-	return nil
-end
-
-local function flattenVector(vector, fallback)
-	local flat = Vector3.new(vector.X, 0, vector.Z)
-	if flat.Magnitude < 0.01 then
-		return fallback or Vector3.zAxis
-	end
-	return flat.Unit
-end
-
-local function getForward(vehicle, main, cfg)
-	local forwardAttachment = getForwardAttachment(vehicle)
-
-	if forwardAttachment then
-		local dir = forwardAttachment.WorldPosition - main.Position
-		if dir.Magnitude > 0.05 then
-			return flattenVector(dir, main.CFrame.LookVector)
-		end
-	end
-
-	local localAxis = axisToLocalVector(cfg.Drive_forward_axis)
-	return flattenVector(main.CFrame:VectorToWorldSpace(localAxis), main.CFrame.LookVector)
-end
-
-local function getYawFromForward(forward)
-	return math.atan2(-forward.X, -forward.Z)
-end
-
-local function getForwardFromYaw(yaw)
-	return Vector3.new(-math.sin(yaw), 0, -math.cos(yaw))
 end
 
 local function moveTowards(current, target, step)
@@ -147,21 +62,56 @@ local function moveTowards(current, target, step)
 	return current
 end
 
+local function getAxisForward(cframe, axisName)
+	axisName = tostring(axisName or "-Z")
+
+	if axisName == "Z" then
+		return cframe.LookVector
+	elseif axisName == "-Z" then
+		return -cframe.LookVector
+	elseif axisName == "X" then
+		return cframe.RightVector
+	elseif axisName == "-X" then
+		return -cframe.RightVector
+	end
+
+	return -cframe.LookVector
+end
+
+local function flatUnit(vector, fallback)
+	local flat = Vector3.new(vector.X, 0, vector.Z)
+	if flat.Magnitude < 0.001 then
+		return fallback or Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
+end
+
+local function yawFromForward(forward)
+	forward = flatUnit(forward, Vector3.new(0, 0, -1))
+	return math.atan2(-forward.X, -forward.Z)
+end
+
+local function forwardFromYaw(yaw)
+	return Vector3.new(-math.sin(yaw), 0, -math.cos(yaw))
+end
+
 local function findBlockingObject(hitPart)
 	local current = hitPart
-
 	while current and current ~= workspace do
 		if current:GetAttribute("BlocksVehicle") == true then
 			return current
 		end
 		current = current.Parent
 	end
-
 	return nil
 end
 
-local function isObstacleAhead(vehicle, main, forward, distance)
+local function isObstacleAhead(vehicle, main, direction, distance)
 	if distance <= 0 then
+		return false
+	end
+
+	if direction.Magnitude < 0.1 then
 		return false
 	end
 
@@ -169,20 +119,14 @@ local function isObstacleAhead(vehicle, main, forward, distance)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { vehicle }
 
-	local right = WORLD_UP:Cross(forward)
-	if right.Magnitude < 0.01 then
-		right = main.CFrame.RightVector
-	else
-		right = right.Unit
-	end
-
-	local halfWidth = math.max(1, math.min(main.Size.X, main.Size.Z) * 0.45)
-	local rayHeight = math.max(0.5, main.Size.Y * 0.25)
+	local forward = direction.Unit
+	local right = main.CFrame.RightVector
+	local halfWidth = math.max(main.Size.X, main.Size.Z) * 0.45
 
 	local origins = {
-		main.Position + Vector3.new(0, rayHeight, 0),
-		main.Position + right * halfWidth + Vector3.new(0, rayHeight, 0),
-		main.Position - right * halfWidth + Vector3.new(0, rayHeight, 0),
+		main.Position + Vector3.new(0, 0.8, 0),
+		main.Position + right * halfWidth + Vector3.new(0, 0.8, 0),
+		main.Position - right * halfWidth + Vector3.new(0, 0.8, 0),
 	}
 
 	for _, origin in ipairs(origins) do
@@ -195,7 +139,7 @@ local function isObstacleAhead(vehicle, main, forward, distance)
 	return false
 end
 
-local function consumeFuel(vehicle, data, main, cfg)
+local function consumeFuel(vehicle, data, cfg, dt)
 	local currentFuel = vehicle:GetAttribute("Current_fuel")
 
 	if currentFuel == nil then
@@ -203,17 +147,13 @@ local function consumeFuel(vehicle, data, main, cfg)
 		vehicle:SetAttribute("Current_fuel", currentFuel)
 	end
 
-	currentFuel = tonumber(currentFuel) or 0
-
-	local distance = (main.Position - data.LastPosition).Magnitude
-	data.LastPosition = main.Position
-
 	if currentFuel <= 0 then
 		data.CurrentSpeed = 0
 		return false
 	end
 
-	if distance > 0.01 and math.abs(data.CurrentSpeed) > 0.5 then
+	if math.abs(data.CurrentSpeed) > 0.5 then
+		local distance = math.abs(data.CurrentSpeed) * dt
 		local used = distance * cfg.Fuel_per_stud
 		local newFuel = math.max(0, currentFuel - used)
 		vehicle:SetAttribute("Current_fuel", newFuel)
@@ -227,29 +167,42 @@ local function consumeFuel(vehicle, data, main, cfg)
 	return true
 end
 
-local function zeroPhysics(part)
-	part.AssemblyLinearVelocity = Vector3.zero
-	part.AssemblyAngularVelocity = Vector3.zero
-end
-
-local function prepareArcadeVehicle(vehicle)
+local function makeVehicleArcadeSafe(vehicle)
 	for _, item in ipairs(vehicle:GetDescendants()) do
 		if item:IsA("BasePart") then
-			zeroPhysics(item)
 			item.Anchored = true
-			item.Massless = true
-
-			-- Аркадна машина рухається через PivotTo.
-			-- Фізичні колізії Roblox тут вимкнені, а перешкоди ловимо Raycast'ами через BlocksVehicle.
 			item.CanCollide = false
+			item.CanTouch = true
+			item.Massless = true
+			item.AssemblyLinearVelocity = Vector3.zero
+			item.AssemblyAngularVelocity = Vector3.zero
 		end
 	end
 end
 
-local function pivotVehicleByMain(vehicle, main, targetMainCFrame)
-	local currentPivot = vehicle:GetPivot()
-	local delta = targetMainCFrame * main.CFrame:Inverse()
-	vehicle:PivotTo(delta * currentPivot)
+local function getModelPivotOffset(vehicle, main)
+	return main.CFrame:ToObjectSpace(vehicle:GetPivot())
+end
+
+local function buildMainCFrame(position, yaw, axisName)
+	local visualForward = forwardFromYaw(yaw)
+	local mainCFrame
+
+	axisName = tostring(axisName or "-Z")
+
+	if axisName == "Z" then
+		mainCFrame = CFrame.lookAt(position, position + visualForward)
+	elseif axisName == "-Z" then
+		mainCFrame = CFrame.lookAt(position, position - visualForward)
+	elseif axisName == "X" then
+		mainCFrame = CFrame.lookAt(position, position + visualForward) * CFrame.Angles(0, math.rad(90), 0)
+	elseif axisName == "-X" then
+		mainCFrame = CFrame.lookAt(position, position + visualForward) * CFrame.Angles(0, math.rad(-90), 0)
+	else
+		mainCFrame = CFrame.lookAt(position, position + visualForward)
+	end
+
+	return mainCFrame
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -266,21 +219,29 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		return
 	end
 
-	prepareArcadeVehicle(vehicle)
+	makeVehicleArcadeSafe(vehicle)
+
+	local axisName = tostring(getAttr(vehicle, "Drive_forward_axis", "-Z"))
+	local currentForward = getAxisForward(main.CFrame, axisName)
+	local currentYaw = yawFromForward(currentForward)
 
 	activeVehicles[vehicle] = {
 		Main = main,
 		Seat = seat,
 		Owner = ownerPlayer,
+
 		CurrentSpeed = 0,
 		CurrentSteer = 0,
-		LastPosition = main.Position,
-		FlippedTime = 0,
+
+		Yaw = currentYaw,
+		Position = main.Position,
+		DriveForwardAxis = axisName,
+		PivotOffset = getModelPivotOffset(vehicle, main),
 	}
 
 	vehicle:SetAttribute("Current_speed", 0)
 
-	print("[VehicleDriveController] Vehicle registered ARCADE ANCHORED:", vehicle.Name)
+	print("[VehicleDriveController] Vehicle registered:", vehicle.Name, "Axis:", axisName)
 end
 
 function VehicleDriveController.UnregisterVehicle(vehicle)
@@ -303,7 +264,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local cfg = getConfig(vehicle)
-		local hasFuel = consumeFuel(vehicle, data, main, cfg)
+		local hasFuel = consumeFuel(vehicle, data, cfg, dt)
 
 		local throttle = seat.Throttle
 		local steer = seat.Steer
@@ -312,7 +273,7 @@ RunService.Heartbeat:Connect(function(dt)
 			throttle = 0
 		end
 
-		if cfg.Steer_invert then
+		if cfg.Steer_invert == true then
 			steer = -steer
 		end
 
@@ -323,71 +284,47 @@ RunService.Heartbeat:Connect(function(dt)
 			targetSpeed = -cfg.Speed_reverse
 		end
 
-		local speedStep = cfg.Acceleration * dt
+		local speedStep
 		if throttle == 0 then
 			speedStep = cfg.Brake_force * dt
+		else
+			speedStep = cfg.Acceleration * dt
 		end
 
 		data.CurrentSpeed = moveTowards(data.CurrentSpeed, targetSpeed, speedStep)
 		data.CurrentSteer = moveTowards(data.CurrentSteer, steer, cfg.Steer_speed * dt)
 
-		local forward = getForward(vehicle, main, cfg)
-		local yaw = getYawFromForward(forward)
-
-		if math.abs(data.CurrentSpeed) > 0.5 then
-			local reverseMul = 1
-			if data.CurrentSpeed < 0 then
-				reverseMul = -1
-			end
-
-			local turnRate = math.rad(cfg.Steer_angle) * data.CurrentSteer * reverseMul
-			yaw += turnRate * dt
-		end
-
-		local newForward = getForwardFromYaw(yaw)
-		local moveForward = newForward
+		local forward = forwardFromYaw(data.Yaw)
+		local moveDirection = forward
 		if data.CurrentSpeed < 0 then
-			moveForward = -newForward
+			moveDirection = -forward
 		end
 
 		if math.abs(data.CurrentSpeed) > 1 then
-			if isObstacleAhead(vehicle, main, moveForward, cfg.Obstacle_check_distance) then
+			if isObstacleAhead(vehicle, main, moveDirection, cfg.Obstacle_check_distance) then
 				data.CurrentSpeed = 0
 			end
 		end
 
-		local currentPos = main.Position
-		local newPos = currentPos + newForward * data.CurrentSpeed * dt
-		local targetMainCFrame = CFrame.lookAt(newPos, newPos + newForward)
+		if math.abs(data.CurrentSpeed) > 0.5 then
+			local reverseMultiplier = 1
+			if data.CurrentSpeed < 0 then
+				reverseMultiplier = -1
+			end
 
-		pivotVehicleByMain(vehicle, main, targetMainCFrame)
+			local turnRate = math.rad(cfg.Steer_angle) * data.CurrentSteer * reverseMultiplier
+			data.Yaw += turnRate * dt
+		end
+
+		forward = forwardFromYaw(data.Yaw)
+		data.Position += forward * data.CurrentSpeed * dt
+
+		local mainCFrame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis)
+		local modelPivot = mainCFrame * data.PivotOffset
+
+		vehicle:PivotTo(modelPivot)
 
 		vehicle:SetAttribute("Current_speed", math.abs(data.CurrentSpeed))
-
-		if cfg.Can_flip == true then
-			local upDot = main.CFrame.UpVector:Dot(WORLD_UP)
-
-			if upDot < 0.4 then
-				data.FlippedTime += dt
-			else
-				data.FlippedTime = 0
-			end
-
-			if data.FlippedTime >= cfg.Flip_time then
-				local pos = main.Position + Vector3.new(0, 3, 0)
-				local fixedForward = flattenVector(main.CFrame.LookVector, Vector3.zAxis)
-				local fixedCFrame = CFrame.lookAt(pos, pos + fixedForward)
-
-				pivotVehicleByMain(vehicle, main, fixedCFrame)
-
-				data.CurrentSpeed = 0
-				data.CurrentSteer = 0
-				data.FlippedTime = 0
-				data.LastPosition = main.Position
-
-				print("[VehicleDriveController] Vehicle flipped back:", vehicle.Name)
-			end
-		end
 	end
 end)
 

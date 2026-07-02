@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 
 local VehicleDriveController = require(script.Parent.VehicleDriveController)
 local HelicopterDriveController = require(script.Parent.HelicopterDriveController)
+local VehicleModuleManager = require(script.Parent.VehicleModuleManager)
 local TeamColors = require(script.Parent.TeamColors)
 local VehicleAccess = require(script.Parent.VehicleAccess)
 
@@ -271,6 +272,7 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	end
 
 	paintVehicle(vehicle, teamOwner or 0)
+	VehicleModuleManager.AttachDefaultModules(vehicle, teamOwner or 0)
 	protectDriverSeat(vehicle)
 
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then

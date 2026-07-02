@@ -56,7 +56,6 @@ end
 
 local function splitCsv(text)
 	local result = {}
-
 	if typeof(text) ~= "string" then
 		return result
 	end
@@ -64,7 +63,6 @@ local function splitCsv(text)
 	for value in string.gmatch(text, "[^,]+") do
 		local clean = string.gsub(value, "^%s+", "")
 		clean = string.gsub(clean, "%s+$", "")
-
 		if clean ~= "" then
 			result[clean] = true
 		end
@@ -73,20 +71,33 @@ local function splitCsv(text)
 	return result
 end
 
-local function getSocketParts(vehicle)
+local function getSocketName(socket)
+	return tostring(socket:GetAttribute("SocketName") or socket.Name)
+end
+
+local function getSocketParts(model)
 	local sockets = {}
 
-	for _, item in ipairs(vehicle:GetDescendants()) do
+	for _, item in ipairs(model:GetDescendants()) do
 		if item:IsA("BasePart") and item:GetAttribute("Socket") == true then
 			table.insert(sockets, item)
 		end
 	end
 
 	table.sort(sockets, function(a, b)
-		return a.Name < b.Name
+		return getSocketName(a) < getSocketName(b)
 	end)
 
 	return sockets
+end
+
+local function findSocketByName(model, socketName)
+	for _, socket in ipairs(getSocketParts(model)) do
+		if socket.Name == socketName or getSocketName(socket) == socketName then
+			return socket
+		end
+	end
+	return nil
 end
 
 local function isModuleAllowed(socket, moduleTemplate)
@@ -129,6 +140,29 @@ local function paintModule(module, teamOwner)
 	end
 end
 
+local function getTemplate(moduleName)
+	local modulesFolder = getModulesFolder()
+	if not modulesFolder then
+		return nil
+	end
+
+	local template = modulesFolder:FindFirstChild(moduleName)
+	if not template or not template:IsA("Model") then
+		warn("[VehicleModuleManager] Module template not found:", tostring(moduleName))
+		return nil
+	end
+
+	return template
+end
+
+function VehicleModuleManager.GetSocketParts(model)
+	return getSocketParts(model)
+end
+
+function VehicleModuleManager.FindSocketByName(model, socketName)
+	return findSocketByName(model, socketName)
+end
+
 function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwner)
 	if not vehicle or not vehicle:IsA("Model") then
 		warn("[VehicleModuleManager] AttachModule failed: vehicle is not a Model")
@@ -150,14 +184,8 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 		return nil
 	end
 
-	local modulesFolder = getModulesFolder()
-	if not modulesFolder then
-		return nil
-	end
-
-	local template = modulesFolder:FindFirstChild(moduleName)
-	if not template or not template:IsA("Model") then
-		warn("[VehicleModuleManager] Module template not found:", tostring(moduleName))
+	local template = getTemplate(moduleName)
+	if not template then
 		return nil
 	end
 
@@ -184,6 +212,7 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 
 	module.Parent = getMountedModulesFolder(vehicle)
 	module:PivotTo(socket.CFrame)
+
 	local finalTeamOwner = teamOwner or vehicle:GetAttribute("TeamOwner") or 0
 	module:SetAttribute("TeamOwner", finalTeamOwner)
 	paintModule(module, finalTeamOwner)
@@ -196,12 +225,62 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 
 	socket:SetAttribute("Occupied", true)
 	socket:SetAttribute("CurrentModule", moduleName)
-	module:SetAttribute("SocketName", socket:GetAttribute("SocketName") or socket.Name)
+	module:SetAttribute("SocketName", getSocketName(socket))
 	module:SetAttribute("SocketPartName", socket.Name)
 
 	print("[VehicleModuleManager] Module attached:", moduleName, "to", vehicle.Name, "socket", socket.Name)
 
 	return module
+end
+
+local function getDirectChildrenForPath(config, parentPath)
+	local result = {}
+	local prefix = ""
+
+	if parentPath and parentPath ~= "" then
+		prefix = parentPath .. "/"
+	end
+
+	for path, moduleName in pairs(config or {}) do
+		if typeof(path) == "string" and string.sub(path, 1, #prefix) == prefix then
+			local rest = string.sub(path, #prefix + 1)
+			if rest ~= "" and not string.find(rest, "/", 1, true) then
+				result[rest] = moduleName
+			end
+		end
+	end
+
+	return result
+end
+
+local function attachConfiguredRecursive(vehicle, hostModel, config, parentPath, teamOwner)
+	local childConfig = getDirectChildrenForPath(config, parentPath)
+
+	for socketName, moduleName in pairs(childConfig) do
+		local socket = findSocketByName(hostModel, socketName)
+		if socket and socket:GetAttribute("Occupied") ~= true then
+			local module = VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwner)
+			if module then
+				local nextPath = socketName
+				if parentPath and parentPath ~= "" then
+					nextPath = parentPath .. "/" .. socketName
+				end
+				attachConfiguredRecursive(vehicle, module, config, nextPath, teamOwner)
+			end
+		end
+	end
+end
+
+function VehicleModuleManager.AttachConfiguredModules(vehicle, config, teamOwner)
+	if not vehicle or not vehicle:IsA("Model") then
+		return
+	end
+
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+		return
+	end
+
+	attachConfiguredRecursive(vehicle, vehicle, config or {}, "", teamOwner)
 end
 
 function VehicleModuleManager.AttachDefaultModules(vehicle, teamOwner)

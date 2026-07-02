@@ -163,10 +163,30 @@ local function buildHoldCFrame(weapon, aimPitch)
 		finalAimPitch = -finalAimPitch
 	end
 
-	return CFrame.new(offsetX, offsetY, offsetZ)
+	local holdCFrame = CFrame.new(offsetX, offsetY, offsetZ)
 		* CFrame.Angles(0, holdYaw, 0)
-		* CFrame.Angles(holdPitch + finalAimPitch, 0, 0)
+		* CFrame.Angles(holdPitch, 0, 0)
 		* CFrame.Angles(0, 0, holdRoll)
+
+	-- V5:
+	-- Після ручного вирівнювання Hold_* камера може крутити не ту вісь.
+	-- Тому вісь прицілювання задається атрибутом на зброї:
+	-- Aim_pitch_axis = "X" / "-X" / "Y" / "-Y" / "Z" / "-Z"
+	local aimAxis = tostring(weapon:GetAttribute("Aim_pitch_axis") or "Z")
+
+	if aimAxis == "X" then
+		return holdCFrame * CFrame.Angles(finalAimPitch, 0, 0)
+	elseif aimAxis == "-X" then
+		return holdCFrame * CFrame.Angles(-finalAimPitch, 0, 0)
+	elseif aimAxis == "Y" then
+		return holdCFrame * CFrame.Angles(0, finalAimPitch, 0)
+	elseif aimAxis == "-Y" then
+		return holdCFrame * CFrame.Angles(0, -finalAimPitch, 0)
+	elseif aimAxis == "-Z" then
+		return holdCFrame * CFrame.Angles(0, 0, -finalAimPitch)
+	end
+
+	return holdCFrame * CFrame.Angles(0, 0, finalAimPitch)
 end
 
 local function applyWeaponAim(state)

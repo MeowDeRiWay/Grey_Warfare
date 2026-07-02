@@ -386,7 +386,7 @@ local function updateSuspension(vehicle, data, cfg, dt)
 	local targetPitch = 0
 	if frontY and backY and length > 0.1 then
 		-- Перед вище => морда піднімається.
-		targetPitch = -math.atan((frontY - backY) / length)
+		targetPitch = math.atan((frontY - backY) / length)
 	end
 
 	targetPitch = clampAngle(targetPitch, cfg.Suspension_max_tilt)

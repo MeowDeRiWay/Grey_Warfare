@@ -5,6 +5,9 @@ local ProjectileManager = require(script.Parent.ProjectileManager)
 
 local WeaponManager = {}
 
+-- VERSION: HOLD AXIS OFFSETS REAL V3
+-- Додано окреме кручення зброї по трьох осях: Hold_pitch, Hold_yaw, Hold_roll.
+
 local DEFAULT_WEAPON_NAME = "Pistol_A"
 local EQUIPPED_WEAPON_FOLDER_NAME = "EquippedWeapon"
 local REMOTE_NAME = "WeaponActionRequest"
@@ -151,9 +154,14 @@ local function weldWeaponToCharacter(weapon, character)
 	local yaw = math.rad(getNumberAttr(weapon, "Hold_yaw", -90))
 	local roll = math.rad(getNumberAttr(weapon, "Hold_roll", 0))
 
+	-- REAL V3:
+	-- Крутимо не одним CFrame.Angles(pitch,yaw,roll), а окремими кроками.
+	-- Так простіше підбирати положення: yaw = горизонтальний розворот, pitch = нахил дула вгору/вниз, roll = завал набік.
 	local targetCFrame = root.CFrame
 		* CFrame.new(offsetX, offsetY, offsetZ)
-		* CFrame.Angles(pitch, yaw, roll)
+		* CFrame.Angles(0, yaw, 0)
+		* CFrame.Angles(pitch, 0, 0)
+		* CFrame.Angles(0, 0, roll)
 
 	weapon:PivotTo(targetCFrame)
 
@@ -224,7 +232,7 @@ function WeaponManager.EquipWeapon(player, weaponName)
 	state.Reloading = false
 
 	weapon:SetAttribute("Current_ammo", state.Ammo)
-	print("[WeaponManager] Equipped:", player.Name, weaponName)
+	print("[WeaponManager REAL V3] Equipped:", player.Name, weaponName, "pitch/yaw/roll:", weapon:GetAttribute("Hold_pitch"), weapon:GetAttribute("Hold_yaw"), weapon:GetAttribute("Hold_roll"))
 	return weapon
 end
 

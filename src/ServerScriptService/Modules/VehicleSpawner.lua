@@ -144,49 +144,6 @@ local function protectDriverSeat(vehicle)
 	end)
 end
 
-local function getSeatOffsetAttr(vehicle, seat, name, defaultValue)
-	local seatValue = seat:GetAttribute(name)
-	if seatValue ~= nil then
-		return tonumber(seatValue) or defaultValue
-	end
-
-	local vehicleValue = vehicle:GetAttribute(name)
-	if vehicleValue ~= nil then
-		return tonumber(vehicleValue) or defaultValue
-	end
-
-	return defaultValue
-end
-
-local function applySeatOrientation(player, vehicle, driverSeat)
-	local character = player.Character
-	if not character then
-		return
-	end
-
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not root or not root:IsA("BasePart") then
-		return
-	end
-
-	-- Roblox: X = pitch, Y = yaw, Z = roll.
-	-- Атрибути можна ставити або на Driver_seat, або на всю модель техніки.
-	local pitch = getSeatOffsetAttr(vehicle, driverSeat, "Seat_pitch_offset", 0)
-	local yaw = getSeatOffsetAttr(vehicle, driverSeat, "Seat_yaw_offset", 0)
-	local roll = getSeatOffsetAttr(vehicle, driverSeat, "Seat_roll_offset", 0)
-
-	local x = getSeatOffsetAttr(vehicle, driverSeat, "Seat_x_offset", 0)
-	local y = getSeatOffsetAttr(vehicle, driverSeat, "Seat_y_offset", 0)
-	local z = getSeatOffsetAttr(vehicle, driverSeat, "Seat_z_offset", 0)
-
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
-
-	root.CFrame = driverSeat.CFrame
-		* CFrame.new(x, y, z)
-		* CFrame.Angles(math.rad(pitch), math.rad(yaw), math.rad(roll))
-end
-
 local function seatOwner(player, vehicle)
 	local driverSeat = getDriverSeat(vehicle)
 	if not driverSeat then
@@ -205,14 +162,6 @@ local function seatOwner(player, vehicle)
 
 	task.wait(0.15)
 	driverSeat:Sit(humanoid)
-
-	-- SeatWeld створюється не миттєво, тому підправляємо кілька разів.
-	for _ = 1, 5 do
-		task.wait(0.05)
-		if driverSeat.Occupant == humanoid then
-			applySeatOrientation(player, vehicle, driverSeat)
-		end
-	end
 end
 
 local function getTemplate(folderName, vehicleName)

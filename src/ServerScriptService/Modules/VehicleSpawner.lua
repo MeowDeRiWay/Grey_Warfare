@@ -144,6 +144,49 @@ local function protectDriverSeat(vehicle)
 	end)
 end
 
+local function getSeatYawOffset(vehicle, driverSeat)
+	local seatOffset = driverSeat:GetAttribute("Seat_yaw_offset")
+	if seatOffset ~= nil then
+		return tonumber(seatOffset) or 0
+	end
+
+	local vehicleOffset = vehicle:GetAttribute("Seat_yaw_offset")
+	if vehicleOffset ~= nil then
+		return tonumber(vehicleOffset) or 0
+	end
+
+	-- Після повороту візуальної моделі StarterCharacter персонаж у сидінні може сидіти боком.
+	-- За замовчуванням повертаємо його відносно сидіння на 90 градусів.
+	return 90
+end
+
+local function applySeatOrientation(vehicle, driverSeat, character)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return
+	end
+
+	local yawOffset = getSeatYawOffset(vehicle, driverSeat)
+	if yawOffset == 0 then
+		return
+	end
+
+	-- VehicleSeat створює SeatWeld не миттєво, тому даємо йому кілька коротких спроб.
+	for _ = 1, 10 do
+		local seatWeld = driverSeat:FindFirstChild("SeatWeld")
+
+		if seatWeld and seatWeld:IsA("Weld") then
+			seatWeld.C0 = seatWeld.C0 * CFrame.Angles(0, math.rad(yawOffset), 0)
+			return
+		end
+
+		task.wait(0.03)
+	end
+
+	-- Запасний варіант, якщо Roblox не створив SeatWeld там, де очікували.
+	root.CFrame = driverSeat.CFrame * CFrame.Angles(0, math.rad(yawOffset), 0)
+end
+
 local function seatOwner(player, vehicle)
 	local driverSeat = getDriverSeat(vehicle)
 	if not driverSeat then
@@ -162,6 +205,10 @@ local function seatOwner(player, vehicle)
 
 	task.wait(0.15)
 	driverSeat:Sit(humanoid)
+
+	task.defer(function()
+		applySeatOrientation(vehicle, driverSeat, character)
+	end)
 end
 
 local function getTemplate(folderName, vehicleName)

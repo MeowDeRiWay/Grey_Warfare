@@ -5,8 +5,9 @@ local ProjectileManager = require(script.Parent.ProjectileManager)
 
 local WeaponManager = {}
 
--- VERSION: HOLD AXIS OFFSETS REAL V3
--- Додано окреме кручення зброї по трьох осях: Hold_pitch, Hold_yaw, Hold_roll.
+-- VERSION: AIM PITCH CAMERA V4
+-- Зброя тримається через Weld, а не WeldConstraint.
+-- Ліво/право лишається за тілом, верх/низ приходить від камери через AimPitch.
 
 local DEFAULT_WEAPON_NAME = "Pistol_A"
 local EQUIPPED_WEAPON_FOLDER_NAME = "EquippedWeapon"
@@ -135,7 +136,58 @@ local function getNumberAttr(object, name, default)
 	return tonumber(value) or default
 end
 
-local function weldWeaponToCharacter(weapon, character)
+local function getBoolAttr(object, name, default)
+	local value = object:GetAttribute(name)
+	if value == nil then
+		return default
+	end
+	return value == true
+end
+
+local function buildHoldCFrame(weapon, aimPitch)
+	aimPitch = tonumber(aimPitch) or 0
+
+	local offsetX = getNumberAttr(weapon, "Hold_offset_x", 0)
+	local offsetY = getNumberAttr(weapon, "Hold_offset_y", 0.05)
+	local offsetZ = getNumberAttr(weapon, "Hold_offset_z", -1.15)
+
+	local holdPitch = math.rad(getNumberAttr(weapon, "Hold_pitch", 0))
+	local holdYaw = math.rad(getNumberAttr(weapon, "Hold_yaw", -90))
+	local holdRoll = math.rad(getNumberAttr(weapon, "Hold_roll", 0))
+
+	local aimScale = getNumberAttr(weapon, "Aim_pitch_scale", 1)
+	local aimOffset = math.rad(getNumberAttr(weapon, "Aim_pitch_offset", 0))
+	local finalAimPitch = aimPitch * aimScale + aimOffset
+
+	if getBoolAttr(weapon, "Aim_pitch_invert", false) then
+		finalAimPitch = -finalAimPitch
+	end
+
+	return CFrame.new(offsetX, offsetY, offsetZ)
+		* CFrame.Angles(0, holdYaw, 0)
+		* CFrame.Angles(holdPitch + finalAimPitch, 0, 0)
+		* CFrame.Angles(0, 0, holdRoll)
+end
+
+local function applyWeaponAim(state)
+	if not state then
+		return
+	end
+
+	local weapon = state.Weapon
+	local weld = state.WeaponWeld
+	local mainLocalOffset = state.MainLocalOffset
+	local aimPitch = state.AimPitch or 0
+
+	if not weapon or not weapon.Parent or not weld or not weld.Parent or not mainLocalOffset then
+		return
+	end
+
+	weld.C0 = buildHoldCFrame(weapon, aimPitch) * mainLocalOffset
+end
+
+
+local function weldWeaponToCharacter(weapon, character, state)
 	local root = getCharacterRoot(character)
 	local main = getMain(weapon)
 	if not root or not main then
@@ -144,32 +196,33 @@ local function weldWeaponToCharacter(weapon, character)
 
 	weapon.PrimaryPart = main
 
-	-- Офсети зброї задаються атрибутами на моделі зброї.
-	-- Це дозволяє підганяти кожну зброю окремо без правок коду.
-	local offsetX = getNumberAttr(weapon, "Hold_offset_x", 0)
-	local offsetY = getNumberAttr(weapon, "Hold_offset_y", 0.05)
-	local offsetZ = getNumberAttr(weapon, "Hold_offset_z", -1.15)
+	local aimPitch = 0
+	if state then
+		aimPitch = state.AimPitch or 0
+	end
 
-	local pitch = math.rad(getNumberAttr(weapon, "Hold_pitch", 0))
-	local yaw = math.rad(getNumberAttr(weapon, "Hold_yaw", -90))
-	local roll = math.rad(getNumberAttr(weapon, "Hold_roll", 0))
+	local holdCFrame = buildHoldCFrame(weapon, aimPitch)
+	local targetPivotCFrame = root.CFrame * holdCFrame
 
-	-- REAL V3:
-	-- Крутимо не одним CFrame.Angles(pitch,yaw,roll), а окремими кроками.
-	-- Так простіше підбирати положення: yaw = горизонтальний розворот, pitch = нахил дула вгору/вниз, roll = завал набік.
-	local targetCFrame = root.CFrame
-		* CFrame.new(offsetX, offsetY, offsetZ)
-		* CFrame.Angles(0, yaw, 0)
-		* CFrame.Angles(pitch, 0, 0)
-		* CFrame.Angles(0, 0, roll)
+	weapon:PivotTo(targetPivotCFrame)
 
-	weapon:PivotTo(targetCFrame)
+	-- Через PivotTo у моделі може бути власний PivotOffset.
+	-- Тому запам'ятовуємо реальне положення Main відносно targetPivotCFrame,
+	-- щоб наступні зміни AimPitch не ламали твою ручну підгонку Hold_*.
+	local mainLocalOffset = targetPivotCFrame:ToObjectSpace(main.CFrame)
 
-	local weld = Instance.new("WeldConstraint")
+	local weld = Instance.new("Weld")
 	weld.Name = "WeaponRootWeld"
 	weld.Part0 = root
 	weld.Part1 = main
+	weld.C0 = holdCFrame * mainLocalOffset
+	weld.C1 = CFrame.identity
 	weld.Parent = main
+
+	if state then
+		state.WeaponWeld = weld
+		state.MainLocalOffset = mainLocalOffset
+	end
 
 	return true
 end
@@ -182,6 +235,9 @@ local function getState(player)
 
 	state = {
 		Weapon = nil,
+		WeaponWeld = nil,
+		MainLocalOffset = nil,
+		AimPitch = 0,
 		Ammo = 0,
 		LastShotTime = 0,
 		Reloading = false,
@@ -218,21 +274,23 @@ function WeaponManager.EquipWeapon(player, weaponName)
 
 	prepareWeaponParts(weapon)
 
-	if not weldWeaponToCharacter(weapon, character) then
+	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
+	local state = getState(player)
+	state.Weapon = weapon
+	state.WeaponWeld = nil
+	state.MainLocalOffset = nil
+	state.Ammo = magazineSize
+	state.LastShotTime = 0
+	state.Reloading = false
+
+	if not weldWeaponToCharacter(weapon, character, state) then
 		warn("[WeaponManager] Failed to weld weapon:", player.Name, weaponName)
 		weapon:Destroy()
 		return nil
 	end
 
-	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
-	local state = getState(player)
-	state.Weapon = weapon
-	state.Ammo = magazineSize
-	state.LastShotTime = 0
-	state.Reloading = false
-
 	weapon:SetAttribute("Current_ammo", state.Ammo)
-	print("[WeaponManager REAL V3] Equipped:", player.Name, weaponName, "pitch/yaw/roll:", weapon:GetAttribute("Hold_pitch"), weapon:GetAttribute("Hold_yaw"), weapon:GetAttribute("Hold_roll"))
+	print("[WeaponManager AIM PITCH V4] Equipped:", player.Name, weaponName, "pitch/yaw/roll:", weapon:GetAttribute("Hold_pitch"), weapon:GetAttribute("Hold_yaw"), weapon:GetAttribute("Hold_roll"))
 	return weapon
 end
 
@@ -310,12 +368,24 @@ local function fireWeapon(player)
 	})
 end
 
+local function setAimPitch(player, aimPitch)
+	local state = getState(player)
+	if type(aimPitch) ~= "number" then
+		return
+	end
+
+	state.AimPitch = aimPitch
+	applyWeaponAim(state)
+end
+
 function WeaponManager.StartRemoteListener()
-	getWeaponRemote().OnServerEvent:Connect(function(player, action)
+	getWeaponRemote().OnServerEvent:Connect(function(player, action, value)
 		if action == "Fire" then
 			fireWeapon(player)
 		elseif action == "Reload" then
 			reloadWeapon(player)
+		elseif action == "AimPitch" then
+			setAimPitch(player, value)
 		end
 	end)
 end

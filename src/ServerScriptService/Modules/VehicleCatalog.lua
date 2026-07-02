@@ -7,6 +7,7 @@ VehicleCatalog.Terminals = {
 		PromptText = "Vehicle Terminal",
 		AllowedVehicles = {
 			Cargo = true,
+			Unicar = true,
 		},
 	},
 

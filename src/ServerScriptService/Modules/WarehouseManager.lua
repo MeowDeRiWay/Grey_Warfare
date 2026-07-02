@@ -67,13 +67,22 @@ local function sameTeam(a, b)
 	return teamA == teamB
 end
 
+
+local function getCargoModule(vehicle)
+	local mounted = vehicle:FindFirstChild("MountedModules")
+	if not mounted then return nil end
+	for _,m in ipairs(mounted:GetChildren()) do
+		if m:GetAttribute("Module")==true and m:GetAttribute("ModuleRole")=="Cargo" then
+			return m
+		end
+	end
+	return nil
+end
+
 local function isVehicle(model)
 	return model:IsA("Model")
 		and model:GetAttribute("TeamOwner") ~= nil
-		and (
-			model:GetAttribute("Max_cargo") ~= nil
-			or model:GetAttribute("Max_fuel") ~= nil
-		)
+		and (getCargoModule(model) ~= nil or model:GetAttribute("Max_fuel") ~= nil)
 end
 
 local function isVehicleNearPart(vehicle, part)
@@ -199,8 +208,10 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	local vehicleCurrent = tonumber(vehicle:GetAttribute("Current_cargo")) or 0
-	local vehicleMax = tonumber(vehicle:GetAttribute("Max_cargo")) or 0
+	local cargoModule=getCargoModule(vehicle)
+	if not cargoModule then return end
+	local vehicleCurrent = tonumber(cargoModule:GetAttribute("Current_cargo")) or 0
+	local vehicleMax = tonumber(cargoModule:GetAttribute("Max_cargo")) or 0
 	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 
 	if vehicleMax <= 0 or vehicleCurrent >= vehicleMax or warehouseCurrent <= 0 then
@@ -214,7 +225,7 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	vehicle:SetAttribute("Current_cargo", vehicleCurrent + transfer)
+	cargoModule:SetAttribute("Current_cargo", vehicleCurrent + transfer)
 	warehouse:SetAttribute("Current_cargo", warehouseCurrent - transfer)
 
 	dprint("[WarehouseManager] LOAD cargo:", vehicle.Name, "+", transfer)
@@ -227,8 +238,10 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	local vehicleCurrent = tonumber(vehicle:GetAttribute("Current_cargo")) or 0
-	local vehicleMax = tonumber(vehicle:GetAttribute("Max_cargo")) or 0
+	local cargoModule=getCargoModule(vehicle)
+	if not cargoModule then return end
+	local vehicleCurrent = tonumber(cargoModule:GetAttribute("Current_cargo")) or 0
+	local vehicleMax = tonumber(cargoModule:GetAttribute("Max_cargo")) or 0
 
 	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 	local warehouseMax = tonumber(warehouse:GetAttribute("Max_cargo")) or 0
@@ -244,7 +257,7 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	vehicle:SetAttribute("Current_cargo", vehicleCurrent - transfer)
+	cargoModule:SetAttribute("Current_cargo", vehicleCurrent - transfer)
 	warehouse:SetAttribute("Current_cargo", warehouseCurrent + transfer)
 
 	dprint("[WarehouseManager] UNLOAD cargo:", vehicle.Name, "-", transfer)

@@ -124,6 +124,14 @@ local function prepareWeaponParts(weapon)
 	end
 end
 
+local function getNumberAttr(object, name, default)
+	local value = object:GetAttribute(name)
+	if value == nil then
+		return default
+	end
+	return tonumber(value) or default
+end
+
 local function weldWeaponToCharacter(weapon, character)
 	local root = getCharacterRoot(character)
 	local main = getMain(weapon)
@@ -132,7 +140,22 @@ local function weldWeaponToCharacter(weapon, character)
 	end
 
 	weapon.PrimaryPart = main
-	weapon:PivotTo(root.CFrame * CFrame.new(0, 0, -1.6))
+
+	-- Офсети зброї задаються атрибутами на моделі зброї.
+	-- Це дозволяє підганяти кожну зброю окремо без правок коду.
+	local offsetX = getNumberAttr(weapon, "Hold_offset_x", 0)
+	local offsetY = getNumberAttr(weapon, "Hold_offset_y", 0.05)
+	local offsetZ = getNumberAttr(weapon, "Hold_offset_z", -1.15)
+
+	local pitch = math.rad(getNumberAttr(weapon, "Hold_pitch", 0))
+	local yaw = math.rad(getNumberAttr(weapon, "Hold_yaw", -90))
+	local roll = math.rad(getNumberAttr(weapon, "Hold_roll", 0))
+
+	local targetCFrame = root.CFrame
+		* CFrame.new(offsetX, offsetY, offsetZ)
+		* CFrame.Angles(pitch, yaw, roll)
+
+	weapon:PivotTo(targetCFrame)
 
 	local weld = Instance.new("WeldConstraint")
 	weld.Name = "WeaponRootWeld"

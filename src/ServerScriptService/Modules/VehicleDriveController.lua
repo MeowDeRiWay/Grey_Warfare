@@ -19,7 +19,7 @@ local DEFAULTS = {
 	Can_flip = true,
 	Flip_time = 2,
 	Drive_forward_axis = "-X",
-	Steer_invert = false,
+	Steer_invert = true,
 }
 
 local function getAttr(vehicle, name, default)
@@ -169,14 +169,14 @@ local function isObstacleAhead(vehicle, main, forward, distance)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { vehicle }
 
-	local right = forward:Cross(WORLD_UP)
+	local right = WORLD_UP:Cross(forward)
 	if right.Magnitude < 0.01 then
 		right = main.CFrame.RightVector
 	else
 		right = right.Unit
 	end
 
-	local halfWidth = math.max(1, main.Size.X * 0.45)
+	local halfWidth = math.max(1, math.min(main.Size.X, main.Size.Z) * 0.45)
 	local rayHeight = math.max(0.5, main.Size.Y * 0.25)
 
 	local origins = {
@@ -227,9 +227,29 @@ local function consumeFuel(vehicle, data, main, cfg)
 	return true
 end
 
-local function zeroPhysics(main)
-	main.AssemblyLinearVelocity = Vector3.zero
-	main.AssemblyAngularVelocity = Vector3.zero
+local function zeroPhysics(part)
+	part.AssemblyLinearVelocity = Vector3.zero
+	part.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function prepareArcadeVehicle(vehicle)
+	for _, item in ipairs(vehicle:GetDescendants()) do
+		if item:IsA("BasePart") then
+			zeroPhysics(item)
+			item.Anchored = true
+			item.Massless = true
+
+			-- Аркадна машина рухається через PivotTo.
+			-- Фізичні колізії Roblox тут вимкнені, а перешкоди ловимо Raycast'ами через BlocksVehicle.
+			item.CanCollide = false
+		end
+	end
+end
+
+local function pivotVehicleByMain(vehicle, main, targetMainCFrame)
+	local currentPivot = vehicle:GetPivot()
+	local delta = targetMainCFrame * main.CFrame:Inverse()
+	vehicle:PivotTo(delta * currentPivot)
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -246,11 +266,7 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		return
 	end
 
-	pcall(function()
-		main:SetNetworkOwner(ownerPlayer)
-	end)
-
-	zeroPhysics(main)
+	prepareArcadeVehicle(vehicle)
 
 	activeVehicles[vehicle] = {
 		Main = main,
@@ -264,7 +280,7 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 
 	vehicle:SetAttribute("Current_speed", 0)
 
-	print("[VehicleDriveController] Vehicle registered:", vehicle.Name)
+	print("[VehicleDriveController] Vehicle registered ARCADE ANCHORED:", vehicle.Name)
 end
 
 function VehicleDriveController.UnregisterVehicle(vehicle)
@@ -342,9 +358,9 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local currentPos = main.Position
 		local newPos = currentPos + newForward * data.CurrentSpeed * dt
+		local targetMainCFrame = CFrame.lookAt(newPos, newPos + newForward)
 
-		zeroPhysics(main)
-		main.CFrame = CFrame.lookAt(newPos, newPos + newForward)
+		pivotVehicleByMain(vehicle, main, targetMainCFrame)
 
 		vehicle:SetAttribute("Current_speed", math.abs(data.CurrentSpeed))
 
@@ -360,9 +376,9 @@ RunService.Heartbeat:Connect(function(dt)
 			if data.FlippedTime >= cfg.Flip_time then
 				local pos = main.Position + Vector3.new(0, 3, 0)
 				local fixedForward = flattenVector(main.CFrame.LookVector, Vector3.zAxis)
+				local fixedCFrame = CFrame.lookAt(pos, pos + fixedForward)
 
-				zeroPhysics(main)
-				main.CFrame = CFrame.lookAt(pos, pos + fixedForward)
+				pivotVehicleByMain(vehicle, main, fixedCFrame)
 
 				data.CurrentSpeed = 0
 				data.CurrentSteer = 0

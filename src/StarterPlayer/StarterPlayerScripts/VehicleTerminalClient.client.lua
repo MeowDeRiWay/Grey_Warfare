@@ -12,7 +12,6 @@ local VEHICLE_BUTTONS = {
 	VehicleTerminal = {
 		Title = "Vehicle Terminal",
 		Vehicles = {
-			{ Name = "Cargo", Text = "Spawn Cargo" },
 			{ Name = "Unicar", Text = "Spawn Unicar" },
 		},
 	},

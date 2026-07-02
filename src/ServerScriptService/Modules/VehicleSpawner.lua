@@ -275,12 +275,13 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	paintVehicle(vehicle, teamOwner or 0)
 
 	local vehicleConfig = VehicleConfigManager.GetVehicleConfig(player, vehicleName)
-	local hasConfiguredModules = next(vehicleConfig) ~= nil
 
-	if hasConfiguredModules then
+	-- ВАЖЛИВО:
+	-- Модулі більше НЕ ставляться автоматично.
+	-- Якщо гравець нічого не обрав у LabTerminal, машина спавниться з пустими сокетами.
+	-- Якщо конфіг є, ставимо тільки ті модулі, які гравець реально вибрав.
+	if next(vehicleConfig) ~= nil then
 		VehicleModuleManager.AttachConfiguredModules(vehicle, vehicleConfig, teamOwner or 0)
-	else
-		VehicleModuleManager.AttachDefaultModules(vehicle, teamOwner or 0)
 	end
 
 	protectDriverSeat(vehicle)

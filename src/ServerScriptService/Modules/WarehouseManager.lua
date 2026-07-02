@@ -4,10 +4,11 @@ local Players = game:GetService("Players")
 
 local WarehouseManager = {}
 
--- VERSION: SUPPLY MAGS V3
--- Додано add_supply:
--- 1 магазин за 5 секунд поповнює Reg_mag_current до Reg_mag_max;
--- потім Utra_mag_current до Utra_mag_max.
+-- VERSION: SUPPLY STATION FIX V4
+-- Додано повну підтримку ObjectType = "SupplyStation".
+-- SupplyStation тепер реєструється окремо від Warehouse.
+-- add_supply поповнює Reg_mag_current до Reg_mag_max, потім Utra_mag_current до Utra_mag_max.
+-- Швидкість: Supply_time на станції або 5 секунд за замовчуванням.
 
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
 local ACTIVE_VEHICLES_FOLDER_NAME = "ActiveVehicles"
@@ -24,6 +25,7 @@ local DEBUG = true
 
 local warehouses = {}
 local fuelStations = {}
+local supplyStations = {}
 local supplyProgressByPlayer = {}
 
 local function dprint(...)
@@ -219,12 +221,16 @@ local function registerObject(object)
 	elseif objectType == "FuelStation" then
 		fuelStations[object] = true
 		dprint("[WarehouseManager] FuelStation registered:", object.Name)
+	elseif objectType == "SupplyStation" then
+		supplyStations[object] = true
+		dprint("[WarehouseManager] SupplyStation registered:", object.Name)
 	end
 end
 
 local function unregisterObject(object)
 	warehouses[object] = nil
 	fuelStations[object] = nil
+	supplyStations[object] = nil
 end
 
 function WarehouseManager.FindWarehouseNear(sourceModel)
@@ -446,6 +452,19 @@ local function tryAddOneMagazine(character, currentAttr, maxAttr)
 	return true
 end
 
+local function findSupplyStationNearPlayer(player, character)
+	for station in pairs(supplyStations) do
+		if station.Parent and sameTeamPlayerObject(player, station) then
+			local addSupply = getPart(station, "add_supply")
+			if addSupply and isModelNearPart(character, addSupply) then
+				return station
+			end
+		end
+	end
+
+	return nil
+end
+
 local function supplyPlayer(player, dt)
 	local character = player.Character
 	if not character then
@@ -453,26 +472,20 @@ local function supplyPlayer(player, dt)
 		return
 	end
 
-	local nearSupply = false
-
-	for warehouse in pairs(warehouses) do
-		if warehouse.Parent and sameTeamPlayerObject(player, warehouse) then
-			local addSupply = getPart(warehouse, "add_supply")
-			if addSupply and isModelNearPart(character, addSupply) then
-				nearSupply = true
-				break
-			end
-		end
-	end
-
-	if not nearSupply then
+	local station = findSupplyStationNearPlayer(player, character)
+	if not station then
 		supplyProgressByPlayer[player] = 0
 		return
 	end
 
+	local supplyTime = tonumber(station:GetAttribute("Supply_time")) or SUPPLY_MAG_TIME
+	if supplyTime <= 0 then
+		supplyTime = SUPPLY_MAG_TIME
+	end
+
 	local progress = (supplyProgressByPlayer[player] or 0) + dt
 
-	while progress >= SUPPLY_MAG_TIME do
+	while progress >= supplyTime do
 		local added = tryAddOneMagazine(character, "Reg_mag_current", "Reg_mag_max")
 
 		if not added then
@@ -484,8 +497,8 @@ local function supplyPlayer(player, dt)
 			break
 		end
 
-		progress -= SUPPLY_MAG_TIME
-		dprint("[WarehouseManager] SUPPLY magazine:", player.Name)
+		progress -= supplyTime
+		dprint("[WarehouseManager] SUPPLY magazine:", player.Name, "Station:", station.Name)
 	end
 
 	supplyProgressByPlayer[player] = progress

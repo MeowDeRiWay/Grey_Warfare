@@ -129,24 +129,6 @@ local function paintModule(module, teamOwner)
 	end
 end
 
-local function copyCargoStatsToVehicle(vehicle, module)
-	local moduleRole = module:GetAttribute("ModuleRole")
-	if moduleRole ~= "Cargo" then
-		return
-	end
-
-	local maxCargo = module:GetAttribute("Max_cargo")
-	local currentCargo = module:GetAttribute("Current_cargo")
-
-	if maxCargo ~= nil then
-		vehicle:SetAttribute("Max_cargo", maxCargo)
-	end
-
-	if currentCargo ~= nil then
-		vehicle:SetAttribute("Current_cargo", currentCargo)
-	end
-end
-
 function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwner)
 	if not vehicle or not vehicle:IsA("Model") then
 		warn("[VehicleModuleManager] AttachModule failed: vehicle is not a Model")
@@ -202,8 +184,9 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 
 	module.Parent = getMountedModulesFolder(vehicle)
 	module:PivotTo(socket.CFrame)
-	paintModule(module, teamOwner or vehicle:GetAttribute("TeamOwner") or 0)
-	copyCargoStatsToVehicle(vehicle, module)
+	local finalTeamOwner = teamOwner or vehicle:GetAttribute("TeamOwner") or 0
+	module:SetAttribute("TeamOwner", finalTeamOwner)
+	paintModule(module, finalTeamOwner)
 
 	local weld = Instance.new("WeldConstraint")
 	weld.Name = "ModuleWeld"

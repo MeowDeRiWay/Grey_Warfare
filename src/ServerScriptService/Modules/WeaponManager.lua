@@ -39,17 +39,20 @@ local function findWeaponTemplate(weaponName)
 		return nil
 	end
 
+	-- Основний шлях для ручної зброї:
+	-- ReplicatedStorage/Weapons/Pistol_A
+	local direct = weaponsFolder:FindFirstChild(weaponName)
+	if direct and direct:IsA("Model") then
+		return direct
+	end
+
+	-- Запасний шлях на майбутнє, якщо колись захочеш окрему папку модулів.
 	local modulesFolder = weaponsFolder:FindFirstChild("WModules")
 	if modulesFolder then
 		local fromModules = modulesFolder:FindFirstChild(weaponName)
 		if fromModules and fromModules:IsA("Model") then
 			return fromModules
 		end
-	end
-
-	local direct = weaponsFolder:FindFirstChild(weaponName)
-	if direct and direct:IsA("Model") then
-		return direct
 	end
 
 	warn("[WeaponManager] Weapon template not found:", weaponName)

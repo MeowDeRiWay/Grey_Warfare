@@ -5,13 +5,20 @@ local ProjectileManager = require(script.Parent.ProjectileManager)
 
 local WeaponManager = {}
 
--- VERSION: AIM PITCH CAMERA V4
--- Зброя тримається через Weld, а не WeldConstraint.
--- Ліво/право лишається за тілом, верх/низ приходить від камери через AimPitch.
+-- VERSION: MAGS + HOLSTER V6
+-- Додано:
+-- 1) магазини Reg/Utra на моделі персонажа;
+-- 2) reload витрачає магазин тільки якщо в активному магазині витрачена хоча б 1 куля;
+-- 3) X ховає/дістає зброю;
+-- 4) зброя автоматично ховається в Driver_seat / Pass_seat;
+-- 5) AimPitch з камери збережений.
 
 local DEFAULT_WEAPON_NAME = "Pistol_A"
 local EQUIPPED_WEAPON_FOLDER_NAME = "EquippedWeapon"
 local REMOTE_NAME = "WeaponActionRequest"
+
+local DEFAULT_REG_MAG_MAX = 10
+local DEFAULT_UTRA_MAG_MAX = 5
 
 local playerStates = {}
 
@@ -43,14 +50,11 @@ local function findWeaponTemplate(weaponName)
 		return nil
 	end
 
-	-- Основний шлях для ручної зброї:
-	-- ReplicatedStorage/Weapons/Pistol_A
 	local direct = weaponsFolder:FindFirstChild(weaponName)
 	if direct and direct:IsA("Model") then
 		return direct
 	end
 
-	-- Запасний шлях на майбутнє, якщо колись захочеш окрему папку модулів.
 	local modulesFolder = weaponsFolder:FindFirstChild("WModules")
 	if modulesFolder then
 		local fromModules = modulesFolder:FindFirstChild(weaponName)
@@ -144,6 +148,50 @@ local function getBoolAttr(object, name, default)
 	return value == true
 end
 
+local function ensureCharacterStats(character)
+	if not character then
+		return
+	end
+
+	local maxHealth = tonumber(character:GetAttribute("Max_health")) or DEFAULT_REG_MAG_MAX * 10
+	if character:GetAttribute("Max_health") == nil then
+		character:SetAttribute("Max_health", maxHealth)
+	end
+	if character:GetAttribute("Current_health") == nil then
+		character:SetAttribute("Current_health", maxHealth)
+	end
+
+	local regMax = tonumber(character:GetAttribute("Reg_mag_max")) or DEFAULT_REG_MAG_MAX
+	if character:GetAttribute("Reg_mag_max") == nil then
+		character:SetAttribute("Reg_mag_max", regMax)
+	end
+	if character:GetAttribute("Reg_mag_current") == nil then
+		character:SetAttribute("Reg_mag_current", regMax)
+	end
+
+	local utraMax = tonumber(character:GetAttribute("Utra_mag_max")) or DEFAULT_UTRA_MAG_MAX
+	if character:GetAttribute("Utra_mag_max") == nil then
+		character:SetAttribute("Utra_mag_max", utraMax)
+	end
+	if character:GetAttribute("Utra_mag_current") == nil then
+		character:SetAttribute("Utra_mag_current", utraMax)
+	end
+end
+
+local function getMagazineAttrNames(weapon)
+	local weaponType = tostring(weapon:GetAttribute("WeaponType") or "Regular")
+	local weaponCal = tostring(weapon:GetAttribute("WeaponCal") or "")
+
+	local lowerType = string.lower(weaponType)
+	local lowerCal = string.lower(weaponCal)
+
+	if lowerType == "utra" or lowerType == "heavy" or lowerCal:find("utra") or lowerCal:find("heavy") then
+		return "Utra_mag_current", "Utra_mag_max"
+	end
+
+	return "Reg_mag_current", "Reg_mag_max"
+end
+
 local function buildHoldCFrame(weapon, aimPitch)
 	aimPitch = tonumber(aimPitch) or 0
 
@@ -168,10 +216,6 @@ local function buildHoldCFrame(weapon, aimPitch)
 		* CFrame.Angles(holdPitch, 0, 0)
 		* CFrame.Angles(0, 0, holdRoll)
 
-	-- V5:
-	-- Після ручного вирівнювання Hold_* камера може крутити не ту вісь.
-	-- Тому вісь прицілювання задається атрибутом на зброї:
-	-- Aim_pitch_axis = "X" / "-X" / "Y" / "-Y" / "Z" / "-Z"
 	local aimAxis = tostring(weapon:GetAttribute("Aim_pitch_axis") or "Z")
 
 	if aimAxis == "X" then
@@ -206,7 +250,6 @@ local function applyWeaponAim(state)
 	weld.C0 = buildHoldCFrame(weapon, aimPitch) * mainLocalOffset
 end
 
-
 local function weldWeaponToCharacter(weapon, character, state)
 	local root = getCharacterRoot(character)
 	local main = getMain(weapon)
@@ -226,9 +269,6 @@ local function weldWeaponToCharacter(weapon, character, state)
 
 	weapon:PivotTo(targetPivotCFrame)
 
-	-- Через PivotTo у моделі може бути власний PivotOffset.
-	-- Тому запам'ятовуємо реальне положення Main відносно targetPivotCFrame,
-	-- щоб наступні зміни AimPitch не ламали твою ручну підгонку Hold_*.
 	local mainLocalOffset = targetPivotCFrame:ToObjectSpace(main.CFrame)
 
 	local weld = Instance.new("Weld")
@@ -257,13 +297,29 @@ local function getState(player)
 		Weapon = nil,
 		WeaponWeld = nil,
 		MainLocalOffset = nil,
+		WeaponName = DEFAULT_WEAPON_NAME,
 		AimPitch = 0,
-		Ammo = 0,
+		Ammo = nil,
 		LastShotTime = 0,
 		Reloading = false,
+		HiddenByPlayer = false,
+		HiddenBySeat = false,
 	}
 	playerStates[player] = state
 	return state
+end
+
+local function destroyEquippedWeapon(state)
+	if state.Weapon and state.Weapon.Parent then
+		state.Weapon:Destroy()
+	end
+	state.Weapon = nil
+	state.WeaponWeld = nil
+	state.MainLocalOffset = nil
+end
+
+local function shouldHideWeapon(state)
+	return state.HiddenByPlayer == true or state.HiddenBySeat == true
 end
 
 function WeaponManager.EquipWeapon(player, weaponName)
@@ -271,6 +327,16 @@ function WeaponManager.EquipWeapon(player, weaponName)
 
 	local character = player.Character
 	if not character then
+		return nil
+	end
+
+	ensureCharacterStats(character)
+
+	local state = getState(player)
+	state.WeaponName = weaponName
+
+	if shouldHideWeapon(state) then
+		destroyEquippedWeapon(state)
 		return nil
 	end
 
@@ -295,11 +361,15 @@ function WeaponManager.EquipWeapon(player, weaponName)
 	prepareWeaponParts(weapon)
 
 	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
-	local state = getState(player)
+	if state.Ammo == nil then
+		state.Ammo = magazineSize
+	else
+		state.Ammo = math.clamp(tonumber(state.Ammo) or magazineSize, 0, magazineSize)
+	end
+
 	state.Weapon = weapon
 	state.WeaponWeld = nil
 	state.MainLocalOffset = nil
-	state.Ammo = magazineSize
 	state.LastShotTime = 0
 	state.Reloading = false
 
@@ -310,14 +380,47 @@ function WeaponManager.EquipWeapon(player, weaponName)
 	end
 
 	weapon:SetAttribute("Current_ammo", state.Ammo)
-	print("[WeaponManager AIM PITCH V4] Equipped:", player.Name, weaponName, "pitch/yaw/roll:", weapon:GetAttribute("Hold_pitch"), weapon:GetAttribute("Hold_yaw"), weapon:GetAttribute("Hold_roll"))
+	print("[WeaponManager MAGS V6] Equipped:", player.Name, weaponName)
 	return weapon
+end
+
+local function refreshEquippedWeapon(player)
+	local state = getState(player)
+
+	if shouldHideWeapon(state) then
+		destroyEquippedWeapon(state)
+	else
+		if not state.Weapon or not state.Weapon.Parent then
+			WeaponManager.EquipWeapon(player, state.WeaponName or DEFAULT_WEAPON_NAME)
+		end
+	end
 end
 
 local function reloadWeapon(player)
 	local state = getState(player)
 	local weapon = state.Weapon
-	if not weapon or not weapon.Parent or state.Reloading then
+
+	if shouldHideWeapon(state) or not weapon or not weapon.Parent or state.Reloading then
+		return
+	end
+
+	local character = player.Character
+	if not character then
+		return
+	end
+
+	ensureCharacterStats(character)
+
+	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
+
+	-- Повний магазин не перезаряджаємо і магазин запасу не витрачаємо.
+	if state.Ammo >= magazineSize then
+		return
+	end
+
+	local currentMagAttr = getMagazineAttrNames(weapon)
+	local reserveMags = tonumber(character:GetAttribute(currentMagAttr)) or 0
+	if reserveMags <= 0 then
 		return
 	end
 
@@ -329,8 +432,19 @@ local function reloadWeapon(player)
 		local currentState = getState(player)
 		if currentState.Weapon ~= weapon then return end
 		if not weapon.Parent then return end
+		if shouldHideWeapon(currentState) then return end
 
-		local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
+		local currentCharacter = player.Character
+		if not currentCharacter then return end
+
+		local magAttr = getMagazineAttrNames(weapon)
+		local currentReserve = tonumber(currentCharacter:GetAttribute(magAttr)) or 0
+		if currentReserve <= 0 then
+			currentState.Reloading = false
+			return
+		end
+
+		currentCharacter:SetAttribute(magAttr, currentReserve - 1)
 		currentState.Ammo = magazineSize
 		currentState.Reloading = false
 		weapon:SetAttribute("Current_ammo", currentState.Ammo)
@@ -341,8 +455,12 @@ local function fireWeapon(player)
 	local state = getState(player)
 	local weapon = state.Weapon
 
+	if shouldHideWeapon(state) then
+		return
+	end
+
 	if not weapon or not weapon.Parent then
-		weapon = WeaponManager.EquipWeapon(player, DEFAULT_WEAPON_NAME)
+		weapon = WeaponManager.EquipWeapon(player, state.WeaponName or DEFAULT_WEAPON_NAME)
 		if not weapon then
 			return
 		end
@@ -358,7 +476,7 @@ local function fireWeapon(player)
 		return
 	end
 
-	if state.Ammo <= 0 then
+	if (state.Ammo or 0) <= 0 then
 		reloadWeapon(player)
 		return
 	end
@@ -398,6 +516,54 @@ local function setAimPitch(player, aimPitch)
 	applyWeaponAim(state)
 end
 
+local function setSeatHidden(player, hidden)
+	local state = getState(player)
+	state.HiddenBySeat = hidden == true
+	refreshEquippedWeapon(player)
+end
+
+local function togglePlayerHidden(player)
+	local state = getState(player)
+	state.HiddenByPlayer = not state.HiddenByPlayer
+	refreshEquippedWeapon(player)
+end
+
+local function isWeaponHidingSeat(seat)
+	if not seat or not seat:IsA("Seat") and not seat:IsA("VehicleSeat") then
+		return false
+	end
+
+	if seat.Name == "Driver_seat" or seat.Name == "Pass_seat" then
+		return true
+	end
+
+	if seat:GetAttribute("HideWeapon") == true then
+		return true
+	end
+
+	return false
+end
+
+local function hookCharacter(player, character)
+	ensureCharacterStats(character)
+
+	local state = getState(player)
+	state.WeaponName = DEFAULT_WEAPON_NAME
+	state.Ammo = nil
+	state.Reloading = false
+	state.HiddenBySeat = false
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.Seated:Connect(function(active, seat)
+			setSeatHidden(player, active == true and isWeaponHidingSeat(seat))
+		end)
+	end
+
+	task.wait(0.5)
+	refreshEquippedWeapon(player)
+end
+
 function WeaponManager.StartRemoteListener()
 	getWeaponRemote().OnServerEvent:Connect(function(player, action, value)
 		if action == "Fire" then
@@ -406,27 +572,28 @@ function WeaponManager.StartRemoteListener()
 			reloadWeapon(player)
 		elseif action == "AimPitch" then
 			setAimPitch(player, value)
+		elseif action == "ToggleWeapon" then
+			togglePlayerHidden(player)
 		end
 	end)
 end
 
 function WeaponManager.StartAutoEquip()
 	Players.PlayerAdded:Connect(function(player)
-		player.CharacterAdded:Connect(function()
-			task.wait(0.5)
-			WeaponManager.EquipWeapon(player, DEFAULT_WEAPON_NAME)
+		player.CharacterAdded:Connect(function(character)
+			hookCharacter(player, character)
 		end)
 	end)
 
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player.Character then
 			task.defer(function()
-				WeaponManager.EquipWeapon(player, DEFAULT_WEAPON_NAME)
+				hookCharacter(player, player.Character)
 			end)
 		end
-		player.CharacterAdded:Connect(function()
-			task.wait(0.5)
-			WeaponManager.EquipWeapon(player, DEFAULT_WEAPON_NAME)
+
+		player.CharacterAdded:Connect(function(character)
+			hookCharacter(player, character)
 		end)
 	end
 end

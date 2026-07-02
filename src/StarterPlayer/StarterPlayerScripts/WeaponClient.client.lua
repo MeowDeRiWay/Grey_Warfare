@@ -13,16 +13,34 @@ gui.Name = "WeaponHud"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local label = Instance.new("TextLabel")
-label.Name = "AmmoLabel"
-label.AnchorPoint = Vector2.new(1, 1)
-label.Position = UDim2.new(1, -24, 1, -24)
-label.Size = UDim2.fromOffset(170, 42)
-label.BackgroundTransparency = 0.25
-label.BorderSizePixel = 1
-label.TextScaled = true
-label.Text = "Пістолет: -- / --"
-label.Parent = gui
+local frame = Instance.new("Frame")
+frame.Name = "StatusFrame"
+frame.AnchorPoint = Vector2.new(1, 1)
+frame.Position = UDim2.new(1, -24, 1, -24)
+frame.Size = UDim2.fromOffset(260, 150)
+frame.BackgroundTransparency = 0.25
+frame.BorderSizePixel = 1
+frame.Parent = gui
+
+local function makeLabel(name, y, text)
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.Position = UDim2.fromOffset(8, y)
+	label.Size = UDim2.new(1, -16, 0, 24)
+	label.Font = Enum.Font.SourceSans
+	label.TextSize = 20
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Text = text
+	label.Parent = frame
+	return label
+end
+
+local healthLabel = makeLabel("HealthLabel", 6, "Health: -- / --")
+local ammoLabel = makeLabel("AmmoLabel", 32, "Ammo: -- / --")
+local regMagLabel = makeLabel("RegMagLabel", 58, "Regular mags: -- / --")
+local utraMagLabel = makeLabel("UtraMagLabel", 84, "Utra mags: -- / --")
+local hintLabel = makeLabel("HintLabel", 112, "X - holster weapon")
 
 local firing = false
 
@@ -56,7 +74,6 @@ local function getCameraPitch()
 	return math.atan2(look.Y, flatMagnitude)
 end
 
-
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 
@@ -65,6 +82,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		weaponRemote:FireServer("Fire")
 	elseif input.KeyCode == Enum.KeyCode.R then
 		weaponRemote:FireServer("Reload")
+	elseif input.KeyCode == Enum.KeyCode.X then
+		weaponRemote:FireServer("ToggleWeapon")
 	end
 end)
 
@@ -97,13 +116,28 @@ RunService.RenderStepped:Connect(function(dt)
 		weaponRemote:FireServer("Fire")
 	end
 
+	local character = player.Character
 	local weapon = getEquippedWeapon()
-	if not weapon then
-		label.Text = "Пістолет: -- / --"
-		return
-	end
 
-	local currentAmmo = tonumber(weapon:GetAttribute("Current_ammo")) or 0
-	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 0
-	label.Text = string.format("Пістолет: %d / %d", currentAmmo, magazineSize)
+	local currentHealth = character and tonumber(character:GetAttribute("Current_health")) or 0
+	local maxHealth = character and tonumber(character:GetAttribute("Max_health")) or 0
+	healthLabel.Text = string.format("Health: %d / %d", math.floor(currentHealth + 0.5), math.floor(maxHealth + 0.5))
+
+	local currentAmmo = weapon and tonumber(weapon:GetAttribute("Current_ammo")) or 0
+	local magazineSize = weapon and tonumber(weapon:GetAttribute("Magazine_size")) or 0
+	ammoLabel.Text = string.format("Ammo: %d / %d", math.floor(currentAmmo + 0.5), math.floor(magazineSize + 0.5))
+
+	local regCurrent = character and tonumber(character:GetAttribute("Reg_mag_current")) or 0
+	local regMax = character and tonumber(character:GetAttribute("Reg_mag_max")) or 0
+	regMagLabel.Text = string.format("Regular mags: %d / %d", math.floor(regCurrent + 0.5), math.floor(regMax + 0.5))
+
+	local utraCurrent = character and tonumber(character:GetAttribute("Utra_mag_current")) or 0
+	local utraMax = character and tonumber(character:GetAttribute("Utra_mag_max")) or 0
+	utraMagLabel.Text = string.format("Utra mags: %d / %d", math.floor(utraCurrent + 0.5), math.floor(utraMax + 0.5))
+
+	if weapon then
+		hintLabel.Text = "X - holster weapon"
+	else
+		hintLabel.Text = "X - draw weapon"
+	end
 end)

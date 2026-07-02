@@ -1,13 +1,21 @@
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
 
 local WarehouseManager = {}
+
+-- VERSION: SUPPLY MAGS V3
+-- Додано add_supply:
+-- 1 магазин за 5 секунд поповнює Reg_mag_current до Reg_mag_max;
+-- потім Utra_mag_current до Utra_mag_max.
 
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
 local ACTIVE_VEHICLES_FOLDER_NAME = "ActiveVehicles"
 
 local CARGO_TRANSFER_RATE = 0.05 -- 5% Max_cargo / sec
 local FUEL_TRANSFER_RATE = 0.10 -- 10% Max_fuel / sec
+
+local SUPPLY_MAG_TIME = 5 -- seconds per magazine
 
 local DEFAULT_TOUCH_RADIUS = 8
 local DEFAULT_FUEL_WAREHOUSE_RADIUS = 100
@@ -16,6 +24,7 @@ local DEBUG = true
 
 local warehouses = {}
 local fuelStations = {}
+local supplyProgressByPlayer = {}
 
 local function dprint(...)
 	if DEBUG then
@@ -56,6 +65,43 @@ local function getTeamOwner(model)
 	return tonumber(model:GetAttribute("TeamOwner")) or 0
 end
 
+local function getPlayerTeamOwner(player)
+	local attr = player:GetAttribute("TeamOwner")
+	if attr ~= nil then
+		return tonumber(attr) or 0
+	end
+
+	local teamValue = player:GetAttribute("Team")
+	if teamValue ~= nil then
+		return tonumber(teamValue) or 0
+	end
+
+	if player.Team then
+		local teamAttr = player.Team:GetAttribute("TeamOwner")
+		if teamAttr ~= nil then
+			return tonumber(teamAttr) or 0
+		end
+
+		local teamNumber = tonumber(player.Team.Name)
+		if teamNumber then
+			return teamNumber
+		end
+
+		local lowerName = string.lower(player.Team.Name)
+		if lowerName == "red" or lowerName == "червоні" or lowerName == "червона" then
+			return 1
+		end
+		if lowerName == "blue" or lowerName == "сині" or lowerName == "синя" then
+			return 2
+		end
+		if lowerName == "seal" then
+			return 3
+		end
+	end
+
+	return 0
+end
+
 local function sameTeam(a, b)
 	local teamA = getTeamOwner(a)
 	local teamB = getTeamOwner(b)
@@ -65,6 +111,17 @@ local function sameTeam(a, b)
 	end
 
 	return teamA == teamB
+end
+
+local function sameTeamPlayerObject(player, object)
+	local playerTeam = getPlayerTeamOwner(player)
+	local objectTeam = getTeamOwner(object)
+
+	if playerTeam == 0 or objectTeam == 0 then
+		return false
+	end
+
+	return playerTeam == objectTeam
 end
 
 local function getMountedModulesFolder(vehicle)
@@ -93,14 +150,11 @@ local function getCargoModule(vehicle)
 end
 
 local function getCargoTarget(vehicle)
-	-- Нова система: вантаж у модулі.
 	local cargoModule = getCargoModule(vehicle)
 	if cargoModule then
 		return cargoModule
 	end
 
-	-- Стара система: вантаж прямо на техніці.
-	-- Це потрібно для Cargo_Heli та старої техніки з VehicleRole/Max_cargo.
 	if vehicle:GetAttribute("Max_cargo") ~= nil then
 		return vehicle
 	end
@@ -122,9 +176,9 @@ local function isVehicle(model)
 		)
 end
 
-local function isVehicleNearPart(vehicle, part)
-	local vehicleMain = getMain(vehicle)
-	if not vehicleMain or not part then
+local function isModelNearPart(model, part)
+	local main = getMain(model)
+	if not main or not part then
 		return false
 	end
 
@@ -132,20 +186,24 @@ local function isVehicleNearPart(vehicle, part)
 		or tonumber(part:GetAttribute("Touch_radius"))
 		or DEFAULT_TOUCH_RADIUS
 
-	local distance = (vehicleMain.Position - part.Position).Magnitude
+	local distance = (main.Position - part.Position).Magnitude
 	if distance <= radius then
 		return true
 	end
 
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = { vehicle }
+	params.FilterDescendantsInstances = { model }
 
 	local ok, touchingParts = pcall(function()
 		return Workspace:GetPartsInPart(part, params)
 	end)
 
 	return ok and #touchingParts > 0
+end
+
+local function isVehicleNearPart(vehicle, part)
+	return isModelNearPart(vehicle, part)
 end
 
 local function registerObject(object)
@@ -376,6 +434,69 @@ local function processFuelStations(vehicle, dt)
 	end
 end
 
+local function tryAddOneMagazine(character, currentAttr, maxAttr)
+	local current = tonumber(character:GetAttribute(currentAttr)) or 0
+	local maxValue = tonumber(character:GetAttribute(maxAttr)) or 0
+
+	if maxValue <= 0 or current >= maxValue then
+		return false
+	end
+
+	character:SetAttribute(currentAttr, math.min(maxValue, current + 1))
+	return true
+end
+
+local function supplyPlayer(player, dt)
+	local character = player.Character
+	if not character then
+		supplyProgressByPlayer[player] = 0
+		return
+	end
+
+	local nearSupply = false
+
+	for warehouse in pairs(warehouses) do
+		if warehouse.Parent and sameTeamPlayerObject(player, warehouse) then
+			local addSupply = getPart(warehouse, "add_supply")
+			if addSupply and isModelNearPart(character, addSupply) then
+				nearSupply = true
+				break
+			end
+		end
+	end
+
+	if not nearSupply then
+		supplyProgressByPlayer[player] = 0
+		return
+	end
+
+	local progress = (supplyProgressByPlayer[player] or 0) + dt
+
+	while progress >= SUPPLY_MAG_TIME do
+		local added = tryAddOneMagazine(character, "Reg_mag_current", "Reg_mag_max")
+
+		if not added then
+			added = tryAddOneMagazine(character, "Utra_mag_current", "Utra_mag_max")
+		end
+
+		if not added then
+			progress = 0
+			break
+		end
+
+		progress -= SUPPLY_MAG_TIME
+		dprint("[WarehouseManager] SUPPLY magazine:", player.Name)
+	end
+
+	supplyProgressByPlayer[player] = progress
+end
+
+local function processSupply(dt)
+	for _, player in ipairs(Players:GetPlayers()) do
+		supplyPlayer(player, dt)
+	end
+end
+
 function WarehouseManager.SetupAll()
 	local folder = getBaseObjectsFolder()
 
@@ -410,17 +531,21 @@ end
 function WarehouseManager.StartLoop()
 	RunService.Heartbeat:Connect(function(dt)
 		local activeVehiclesFolder = getActiveVehiclesFolder()
-		if not activeVehiclesFolder then
-			return
-		end
-
-		for _, vehicle in ipairs(activeVehiclesFolder:GetChildren()) do
-			if isVehicle(vehicle) then
-				processWarehouses(vehicle, dt)
-				processFuelStations(vehicle, dt)
+		if activeVehiclesFolder then
+			for _, vehicle in ipairs(activeVehiclesFolder:GetChildren()) do
+				if isVehicle(vehicle) then
+					processWarehouses(vehicle, dt)
+					processFuelStations(vehicle, dt)
+				end
 			end
 		end
+
+		processSupply(dt)
 	end)
 end
+
+Players.PlayerRemoving:Connect(function(player)
+	supplyProgressByPlayer[player] = nil
+end)
 
 return WarehouseManager

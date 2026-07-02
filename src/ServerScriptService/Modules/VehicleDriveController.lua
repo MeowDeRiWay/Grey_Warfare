@@ -4,20 +4,29 @@ local VehicleDriveController = {}
 
 local activeVehicles = {}
 
-local function getAttr(vehicle, name)
+local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
-
-	assert(
-		value ~= nil,
-		string.format("[VehicleDriveController] Vehicle '%s' has no attribute '%s'", vehicle.Name, name)
-	)
-
+	if value == nil then
+		return default
+	end
 	return value
+end
+
+local function getMain(vehicle)
+	local main = vehicle:FindFirstChild("Main", true)
+	if main and main:IsA("BasePart") then
+		return main
+	end
+	return nil
 end
 
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
+	if seat and seat:IsA("VehicleSeat") then
+		return seat
+	end
 
+	seat = vehicle:FindFirstChild("VehicleSeat", true)
 	if seat and seat:IsA("VehicleSeat") then
 		return seat
 	end
@@ -25,41 +34,39 @@ local function getDriverSeat(vehicle)
 	return nil
 end
 
-local function getMain(vehicle)
-	local main = vehicle:FindFirstChild("Main", true)
+local function getConfig(vehicle)
+	return {
+		Speed = getAttr(vehicle, "Speed", 40),
+		Speed_reverse = getAttr(vehicle, "Speed_reverse", 10),
 
-	if main and main:IsA("BasePart") then
-		return main
+		Acceleration = getAttr(vehicle, "Acceleration", 10),
+		Brake_force = getAttr(vehicle, "Brake_force", 40),
+
+		Steer_angle = getAttr(vehicle, "Steer_angle", 28),
+		Steer_speed = getAttr(vehicle, "Steer_speed", 7),
+
+		Can_flip = getAttr(vehicle, "Can_flip", true),
+		Flip_time = getAttr(vehicle, "Flip_time", 2),
+
+		Obstacle_check_distance = getAttr(vehicle, "Obstacle_check_distance", 4),
+
+		Max_fuel = getAttr(vehicle, "Max_fuel", 100),
+		Fuel_per_stud = getAttr(vehicle, "Fuel_per_stud", 0.01),
+	}
+end
+
+local function findBlockingObject(hitPart)
+	local current = hitPart
+
+	while current and current ~= workspace do
+		if current:GetAttribute("BlocksVehicle") == true then
+			return current
+		end
+
+		current = current.Parent
 	end
 
 	return nil
-end
-
-local function getConfig(vehicle)
-	return {
-		Speed = getAttr(vehicle, "Speed"),
-		Speed_reverse = getAttr(vehicle, "Speed_reverse"),
-
-		Acceleration = getAttr(vehicle, "Acceleration"),
-		Brake_force = getAttr(vehicle, "Brake_force"),
-
-		Steer_angle = getAttr(vehicle, "Steer_angle"),
-		Steer_speed = getAttr(vehicle, "Steer_speed"),
-
-		Suspension_force = getAttr(vehicle, "Suspension_force"),
-		Suspension_damping = getAttr(vehicle, "Suspension_damping"),
-		Suspension_height = getAttr(vehicle, "Suspension_height"),
-
-		Flip_force = getAttr(vehicle, "Flip_force"),
-		Flip_time = getAttr(vehicle, "Flip_time"),
-		Can_flip = getAttr(vehicle, "Can_flip"),
-
-		Obstacle_check_distance = getAttr(vehicle, "Obstacle_check_distance"),
-
-		Max_fuel = getAttr(vehicle, "Max_fuel"),
-		Current_fuel = getAttr(vehicle, "Current_fuel"),
-		Fuel_per_stud = getAttr(vehicle, "Fuel_per_stud"),
-	}
 end
 
 local function isObstacleAhead(vehicle, main, direction, distance)
@@ -75,38 +82,66 @@ local function isObstacleAhead(vehicle, main, direction, distance)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { vehicle }
 
-	local origin = main.Position + Vector3.new(0, 0.5, 0)
-	local result = workspace:Raycast(origin, direction.Unit * distance, params)
+	local forward = direction.Unit
+	local right = main.CFrame.RightVector
 
-	return result ~= nil
+	local origins = {
+		main.Position + Vector3.new(0, 0.8, 0),
+		main.Position + right * (main.Size.X * 0.45) + Vector3.new(0, 0.8, 0),
+		main.Position - right * (main.Size.X * 0.45) + Vector3.new(0, 0.8, 0),
+	}
+
+	for _, origin in ipairs(origins) do
+		local result = workspace:Raycast(origin, forward * distance, params)
+
+		if result then
+			if findBlockingObject(result.Instance) then
+				return true
+			end
+		end
+	end
+
+	return false
 end
 
-local function updateFuel(vehicle, data, main, cfg)
-	local currentFuel = vehicle:GetAttribute("Current_fuel") or 0
+local function consumeFuel(vehicle, data, main, cfg)
+	local currentFuel = vehicle:GetAttribute("Current_fuel")
+
+	if currentFuel == nil then
+		currentFuel = cfg.Max_fuel
+		vehicle:SetAttribute("Current_fuel", currentFuel)
+	end
 
 	local distance = (main.Position - data.LastPosition).Magnitude
 	data.LastPosition = main.Position
 
 	if currentFuel <= 0 then
 		data.CurrentSpeed = 0
-		main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
 		return false
 	end
 
 	if distance > 0.01 and math.abs(data.CurrentSpeed) > 0.5 then
-		local fuelUsed = distance * cfg.Fuel_per_stud
-		local newFuel = math.max(0, currentFuel - fuelUsed)
-
+		local used = distance * cfg.Fuel_per_stud
+		local newFuel = math.max(0, currentFuel - used)
 		vehicle:SetAttribute("Current_fuel", newFuel)
 
 		if newFuel <= 0 then
 			data.CurrentSpeed = 0
-			main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
 			return false
 		end
 	end
 
 	return true
+end
+
+local function moveTowards(current, target, step)
+	if current < target then
+		return math.min(current + step, target)
+	elseif current > target then
+		return math.max(current - step, target)
+	end
+
+	return current
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -119,11 +154,13 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	end
 
 	if not seat then
-		warn("[VehicleDriveController] Driver_seat VehicleSeat not found:", vehicle.Name)
+		warn("[VehicleDriveController] VehicleSeat not found:", vehicle.Name)
 		return
 	end
 
-	main:SetNetworkOwner(ownerPlayer)
+	pcall(function()
+		main:SetNetworkOwner(ownerPlayer)
+	end)
 
 	activeVehicles[vehicle] = {
 		Main = main,
@@ -132,10 +169,12 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 
 		CurrentSpeed = 0,
 		CurrentSteer = 0,
-		FlippedTime = 0,
 
 		LastPosition = main.Position,
+		FlippedTime = 0,
 	}
+
+	vehicle:SetAttribute("Current_speed", 0)
 
 	print("[VehicleDriveController] Vehicle registered:", vehicle.Name)
 end
@@ -160,7 +199,7 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local cfg = getConfig(vehicle)
-		local hasFuel = updateFuel(vehicle, data, main, cfg)
+		local hasFuel = consumeFuel(vehicle, data, main, cfg)
 
 		local throttle = seat.Throttle
 		local steer = seat.Steer
@@ -178,69 +217,71 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 
 		local speedStep
-
 		if throttle == 0 then
 			speedStep = cfg.Brake_force * dt
 		else
 			speedStep = cfg.Acceleration * dt
 		end
 
-		if data.CurrentSpeed < targetSpeed then
-			data.CurrentSpeed = math.min(data.CurrentSpeed + speedStep, targetSpeed)
-		elseif data.CurrentSpeed > targetSpeed then
-			data.CurrentSpeed = math.max(data.CurrentSpeed - speedStep, targetSpeed)
-		end
+		data.CurrentSpeed = moveTowards(data.CurrentSpeed, targetSpeed, speedStep)
 
-		local targetSteer = steer
 		local steerStep = cfg.Steer_speed * dt
-
-		if data.CurrentSteer < targetSteer then
-			data.CurrentSteer = math.min(data.CurrentSteer + steerStep, targetSteer)
-		elseif data.CurrentSteer > targetSteer then
-			data.CurrentSteer = math.max(data.CurrentSteer - steerStep, targetSteer)
-		end
+		data.CurrentSteer = moveTowards(data.CurrentSteer, steer, steerStep)
 
 		local forward = main.CFrame.LookVector
-		local moveDirection = forward
+		local flatForward = Vector3.new(forward.X, 0, forward.Z)
 
+		if flatForward.Magnitude < 0.01 then
+			flatForward = Vector3.zAxis
+		else
+			flatForward = flatForward.Unit
+		end
+
+		local moveDirection = flatForward
 		if data.CurrentSpeed < 0 then
-			moveDirection = -forward
+			moveDirection = -flatForward
 		end
 
 		if math.abs(data.CurrentSpeed) > 1 then
 			if isObstacleAhead(vehicle, main, moveDirection, cfg.Obstacle_check_distance) then
 				data.CurrentSpeed = 0
-				main.AssemblyLinearVelocity = Vector3.new(0, main.AssemblyLinearVelocity.Y, 0)
 			end
 		end
 
-		local currentVelocity = main.AssemblyLinearVelocity
+		local pos = main.Position
+		local yaw = math.atan2(-flatForward.X, -flatForward.Z)
 
-		main.AssemblyLinearVelocity = Vector3.new(
-			forward.X * data.CurrentSpeed,
-			currentVelocity.Y,
-			forward.Z * data.CurrentSpeed
-		)
+		if math.abs(data.CurrentSpeed) > 0.5 then
+			local steerDirection = 1
+			if data.CurrentSpeed < 0 then
+				steerDirection = -1
+			end
 
-		local steerPower = math.rad(cfg.Steer_angle) * data.CurrentSteer
+			local turnRate = math.rad(cfg.Steer_angle) * data.CurrentSteer * steerDirection
+			yaw += turnRate * dt
+		end
 
-		main.AssemblyAngularVelocity = Vector3.new(
-			main.AssemblyAngularVelocity.X,
-			-steerPower,
-			main.AssemblyAngularVelocity.Z
-		)
+		local newForward = Vector3.new(-math.sin(yaw), 0, -math.cos(yaw))
+		local newPos = pos + newForward * data.CurrentSpeed * dt
+
+		main.AssemblyLinearVelocity = Vector3.zero
+		main.AssemblyAngularVelocity = Vector3.zero
+
+		main.CFrame = CFrame.lookAt(newPos, newPos + newForward)
+
+		vehicle:SetAttribute("Current_speed", math.abs(data.CurrentSpeed))
 
 		if cfg.Can_flip == true then
 			local upDot = main.CFrame.UpVector:Dot(Vector3.yAxis)
 
-			if math.abs(upDot) < 0.55 or upDot < 0 then
+			if upDot < 0.4 then
 				data.FlippedTime += dt
 			else
 				data.FlippedTime = 0
 			end
 
 			if data.FlippedTime >= cfg.Flip_time then
-				local pos = main.Position
+				local currentPos = main.Position
 				local look = main.CFrame.LookVector
 				local flatLook = Vector3.new(look.X, 0, look.Z)
 
@@ -250,12 +291,9 @@ RunService.Heartbeat:Connect(function(dt)
 					flatLook = flatLook.Unit
 				end
 
-				main.AssemblyAngularVelocity = Vector3.zero
-				main.AssemblyLinearVelocity = Vector3.zero
-
 				main.CFrame = CFrame.lookAt(
-					pos + Vector3.new(0, 4, 0),
-					pos + flatLook + Vector3.new(0, 4, 0)
+					currentPos + Vector3.new(0, 3, 0),
+					currentPos + Vector3.new(0, 3, 0) + flatLook
 				)
 
 				data.CurrentSpeed = 0

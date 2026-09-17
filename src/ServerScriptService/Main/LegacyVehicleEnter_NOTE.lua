@@ -1,0 +1,26 @@
+-- LegacyVehicleEnter.lua
+--
+-- Цей файл НЕ потрібен для запуску.
+-- Це нотатка, що стара система входу в транспорт більше не повинна
+-- використовуватись.
+--
+-- Старі механіки, які замінено:
+--
+-- 1) HelicopterDriveController.setupEnterPrompt()
+--    Старий ProximityPrompt "Enter / Exit" більше не використовується.
+--    VehicleEnterSystem.server.lua видаляє HelicopterEnterPrompt навіть якщо
+--    старий HelicopterDriveController ще встиг його створити.
+--
+-- 2) Вбудована Roblox touch-посадка у Driver_seat.
+--    Порожній Seat/VehicleSeat тримається Disabled=true.
+--    Він активується тільки сервером на момент валідного E-запиту.
+--
+-- Єдина актуальна схема входу:
+--   VehicleEnterClient.client.lua
+--       -> E
+--   VehicleEnterRequest
+--       -> VehicleEnterSystem.server.lua
+--       -> перевірка власника / команди / відстані / вільного місця
+--       -> Driver_seat:Sit(humanoid)
+--
+-- Вихід поки лишається стандартним Roblox способом.

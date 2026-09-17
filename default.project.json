@@ -2,17 +2,14 @@
   "name": "Grey_Warfare",
   "tree": {
     "$className": "DataModel",
-
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "$path": "src/ServerScriptService"
     },
-
     "ServerStorage": {
       "$className": "ServerStorage",
       "$path": "src/ServerStorage"
     },
-
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
@@ -20,10 +17,16 @@
         "$path": "src/StarterPlayer/StarterPlayerScripts"
       }
     },
-
     "StarterGui": {
       "$className": "StarterGui",
       "$path": "src/StarterGui"
+    },
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "ArtilleryCalculators": {
+        "$className": "Folder",
+        "$path": "src/ReplicatedStorage/ArtilleryCalculators"
+      }
     }
   }
 }

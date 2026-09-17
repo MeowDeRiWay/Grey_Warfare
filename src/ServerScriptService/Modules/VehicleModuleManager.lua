@@ -4,29 +4,59 @@ local TeamColors = require(script.Parent.TeamColors)
 
 local VehicleModuleManager = {}
 
-local VEHICLES_FOLDER_NAME = "Vehicles"
-local VMODULES_FOLDER_NAME = "VModules"
+local VEHICLE_FOLDER_NAMES = {
+	"Vehicles",
+	"Heli",
+	"Planes",
+}
+
+local MODULE_FOLDER_BY_FAMILY = {
+	Vehicles = "VModules",
+	Heli = "HModules",
+	Planes = "PModules",
+}
 local DEFAULT_MODULE_NAME = "Cargo_low"
 
-local function getVehiclesFolder()
-	return ReplicatedStorage:FindFirstChild(VEHICLES_FOLDER_NAME)
+
+-- Module alignment helpers
+local function getNumberAttr(primary, secondary, name, default)
+	local value = primary and primary:GetAttribute(name)
+	if value == nil and secondary then
+		value = secondary:GetAttribute(name)
+	end
+	if value == nil then
+		return default
+	end
+	return tonumber(value) or default
 end
 
-local function getModulesFolder()
-	local vehiclesFolder = getVehiclesFolder()
-	if not vehiclesFolder then
-		warn("[VehicleModuleManager] ReplicatedStorage.Vehicles not found")
-		return nil
+local function getModuleFolders()
+	local result = {}
+	local seen = {}
+
+	local function addFolder(folder)
+		if folder
+			and folder:IsA("Folder")
+			and not seen[folder]
+		then
+			seen[folder] = true
+			table.insert(result, folder)
+		end
 	end
 
-	local modulesFolder = vehiclesFolder:FindFirstChild(VMODULES_FOLDER_NAME)
-	if not modulesFolder then
-		warn("[VehicleModuleManager] ReplicatedStorage.Vehicles.VModules not found")
-		return nil
+	for _, folderName in ipairs(VEHICLE_FOLDER_NAMES) do
+		local familyFolder = ReplicatedStorage:FindFirstChild(folderName)
+		if familyFolder and familyFolder:IsA("Folder") then
+			local moduleFolderName = MODULE_FOLDER_BY_FAMILY[folderName]
+			if moduleFolderName then
+				addFolder(familyFolder:FindFirstChild(moduleFolderName))
+			end
+		end
 	end
 
-	return modulesFolder
+	return result
 end
+
 
 local function getMain(model)
 	local main = model:FindFirstChild("Main", true)
@@ -35,6 +65,75 @@ local function getMain(model)
 	end
 	return nil
 end
+
+local function getHostMainForSocket(socket, vehicle)
+	local current = socket.Parent
+
+	while current and current ~= game do
+		if current:IsA("Model") then
+			-- Prefer a DIRECT Main. This avoids accidentally taking Main
+			-- from some already-mounted child module.
+			local directMain = current:FindFirstChild("Main")
+			if directMain and directMain:IsA("BasePart") then
+				return directMain
+			end
+
+			if current == vehicle then
+				break
+			end
+		end
+
+		current = current.Parent
+	end
+
+	-- Final fallback: vehicle Main.
+	return getMain(vehicle)
+end
+
+local function buildTargetMainCFrame(vehicle, socket, module)
+	local hostMain = getHostMainForSocket(socket, vehicle)
+
+	if not hostMain then
+		warn(
+			"[VehicleModuleManager] Host Main not found for socket:",
+			socket:GetFullName()
+		)
+		return socket.CFrame
+	end
+
+	-- FINAL STANDARD:
+	-- Socket gives POSITION only.
+	-- Host Main gives ORIENTATION.
+	--
+	-- This means a neutral Main on every module will always inherit the
+	-- same upright/forward orientation as the vehicle (or parent module),
+	-- regardless of a socket Part's own accidental rotation.
+	local target =
+		CFrame.new(socket.Position)
+		* hostMain.CFrame.Rotation
+
+	-- Optional per-socket/module fine tuning, normally leave all at 0.
+	local x = getNumberAttr(socket, module, "Mount_offset_x", 0)
+	local y = getNumberAttr(socket, module, "Mount_offset_y", 0)
+	local z = getNumberAttr(socket, module, "Mount_offset_z", 0)
+
+	local pitch = math.rad(getNumberAttr(socket, module, "Mount_pitch", 0))
+	local yaw = math.rad(getNumberAttr(socket, module, "Mount_yaw", 0))
+	local roll = math.rad(getNumberAttr(socket, module, "Mount_roll", 0))
+
+	return target
+		* CFrame.new(x, y, z)
+		* CFrame.Angles(pitch, yaw, roll)
+end
+
+local function pivotModuleByMain(module, main, targetMainCFrame)
+	-- Move the WHOLE module by the delta from its actual Main CFrame.
+	-- This intentionally ignores Model.WorldPivot / imported pivot quirks.
+	local currentPivot = module:GetPivot()
+	local delta = targetMainCFrame * main.CFrame:Inverse()
+	module:PivotTo(delta * currentPivot)
+end
+
 
 local function getTeamColorPart(model)
 	local part = model:FindFirstChild("Team_color", true)
@@ -141,18 +240,19 @@ local function paintModule(module, teamOwner)
 end
 
 local function getTemplate(moduleName)
-	local modulesFolder = getModulesFolder()
-	if not modulesFolder then
-		return nil
+	for _, modulesFolder in ipairs(getModuleFolders()) do
+		local template = modulesFolder:FindFirstChild(moduleName)
+
+		if template and template:IsA("Model") then
+			return template
+		end
 	end
 
-	local template = modulesFolder:FindFirstChild(moduleName)
-	if not template or not template:IsA("Model") then
-		warn("[VehicleModuleManager] Module template not found:", tostring(moduleName))
-		return nil
-	end
-
-	return template
+	warn(
+		"[VehicleModuleManager] Module template not found in any VModules folder:",
+		tostring(moduleName)
+	)
+	return nil
 end
 
 function VehicleModuleManager.GetSocketParts(model)
@@ -211,7 +311,13 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 	end
 
 	module.Parent = getMountedModulesFolder(vehicle)
-	module:PivotTo(socket.CFrame)
+
+	-- Final standardized mount:
+	-- place the module by its actual Main, not by Model pivot,
+	-- using socket position and the host Main orientation.
+	local moduleMain = module.PrimaryPart
+	local targetMainCFrame = buildTargetMainCFrame(vehicle, socket, module)
+	pivotModuleByMain(module, moduleMain, targetMainCFrame)
 
 	local finalTeamOwner = teamOwner or vehicle:GetAttribute("TeamOwner") or 0
 	module:SetAttribute("TeamOwner", finalTeamOwner)
@@ -228,7 +334,18 @@ function VehicleModuleManager.AttachModule(vehicle, socket, moduleName, teamOwne
 	module:SetAttribute("SocketName", getSocketName(socket))
 	module:SetAttribute("SocketPartName", socket.Name)
 
-	print("[VehicleModuleManager] Module attached:", moduleName, "to", vehicle.Name, "socket", socket.Name)
+	local hostMain = getHostMainForSocket(socket, vehicle)
+	print(
+		"[VehicleModuleManager] Module attached:",
+		moduleName,
+		"to",
+		vehicle.Name,
+		"socket",
+		socket.Name,
+		"| orientation source:",
+		hostMain and hostMain:GetFullName() or "NONE",
+		"| socket rotation ignored"
+	)
 
 	return module
 end
@@ -276,10 +393,7 @@ function VehicleModuleManager.AttachConfiguredModules(vehicle, config, teamOwner
 		return
 	end
 
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-		return
-	end
-
+	-- Ground, helicopter and plane all use the same socket/config pipeline.
 	attachConfiguredRecursive(vehicle, vehicle, config or {}, "", teamOwner)
 end
 
@@ -298,5 +412,7 @@ function VehicleModuleManager.AttachDefaultModules(vehicle, teamOwner)
 		end
 	end
 end
+
+print("[VehicleModuleManager] Unified module sources enabled: Vehicles/VModules + Heli/HModules + Planes/PModules")
 
 return VehicleModuleManager

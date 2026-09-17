@@ -2,6 +2,10 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+
+local VehicleDamageManager = require(script.Parent.VehicleDamageManager)
+VehicleDamageManager.Start()
 
 local HelicopterDriveController = {}
 
@@ -249,10 +253,13 @@ end
 
 local function hasBlockingParts(vehicle, boxCFrame, boxSize, ownerPlayer)
 	local params = makeOverlapParams(vehicle, ownerPlayer)
+	-- Collision blocking is opt-in: ONLY exact parts with BlocksVehicle=true stop vehicles.
+	-- Invisible trigger zones, warehouse transfer areas, roads, etc. are ignored.
+	params.RespectCanCollide = false
 	local parts = workspace:GetPartBoundsInBox(boxCFrame, boxSize, params)
 
 	for _, part in ipairs(parts) do
-		if part:IsA("BasePart") and part.CanCollide then
+		if part:IsA("BasePart") and part:GetAttribute("BlocksVehicle") == true then
 			return true, part
 		end
 	end
@@ -351,6 +358,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 
 	vehicle.PrimaryPart = main
 	anchorAll(vehicle)
+	VehicleDamageManager.RegisterVehicle(vehicle)
 
 	local pivot = vehicle:GetPivot()
 	local _, yaw, _ = main.CFrame:ToOrientation()
@@ -376,6 +384,7 @@ function HelicopterDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RotorSpeed = 0,
 		CurrentTurn = 0,
 		LandedCenterY = nil,
+		LastBlockingPart = nil,
 	}
 
 	activeHelicopters[vehicle] = data
@@ -533,20 +542,35 @@ RunService.Heartbeat:Connect(function(dt)
 		local targetMainCFrame = getMainCFrameForCenter(data, wantedCenterPosition, data.Yaw, data.Pitch, data.Roll)
 
 		local canMove = true
+		local blockingPart = nil
 		if data.Ground then
 			local targetGroundCFrame = targetMainCFrame * data.MainToGround
-			local blocking = hasBlockingParts(vehicle, targetGroundCFrame, data.Ground.Size, owner)
+			local blocking, hitPart = hasBlockingParts(vehicle, targetGroundCFrame, data.Ground.Size, owner)
 			if blocking then
 				canMove = false
+				blockingPart = hitPart
 			end
 		end
 
 		if canMove then
+			data.LastBlockingPart = nil
 			pivotVehicleToMain(data, targetMainCFrame)
 		else
+			local impactSpeed = math.sqrt(
+				data.ForwardSpeed * data.ForwardSpeed
+				+ data.SideSpeed * data.SideSpeed
+				+ data.VerticalSpeed * data.VerticalSpeed
+			)
+
+			if blockingPart and data.LastBlockingPart ~= blockingPart then
+				VehicleDamageManager.ApplyCollisionDamage(vehicle, impactSpeed)
+			end
+			data.LastBlockingPart = blockingPart
+
 			data.ForwardSpeed = 0
 			data.SideSpeed = 0
 			data.VerticalSpeed = 0
+			data.CurrentTurn = 0
 			local stopMainCFrame = getMainCFrameForCenter(data, currentCenterPosition, data.Yaw, data.Pitch, data.Roll)
 			pivotVehicleToMain(data, stopMainCFrame)
 		end

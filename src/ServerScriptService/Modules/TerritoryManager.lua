@@ -94,23 +94,33 @@ function TerritoryManager.ApplyOwnership()
 			local objectRoot = getRootPart(object)
 
 			if objectRoot then
+				local selectedOwner = nil
+				local selectedDistance = math.huge
+
 				for _, flag in ipairs(flags) do
 					local flagRoot = getRootPart(flag)
 
 					if flagRoot then
-						local flagOwner = FlagManager.GetTeamOwner(flag)
 						local radius = FlagManager.GetOwnershipRadius(flag)
+						local distance =
+							(objectRoot.Position - flagRoot.Position).Magnitude
 
-						if flagOwner ~= 0 then
-							local distance = (objectRoot.Position - flagRoot.Position).Magnitude
+						if distance <= radius and distance < selectedDistance then
+							selectedDistance = distance
 
-							if distance <= radius then
-								object:SetAttribute("TeamOwner", flagOwner)
-								paintObject(object)
-								break
+							if FlagManager.IsDestroyed(flag) then
+								selectedOwner = 0
+							else
+								selectedOwner =
+									tonumber(FlagManager.GetTeamOwner(flag)) or 0
 							end
 						end
 					end
+				end
+
+				if selectedOwner ~= nil then
+					object:SetAttribute("TeamOwner", selectedOwner)
+					paintObject(object)
 				end
 			end
 		end

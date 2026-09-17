@@ -7,7 +7,8 @@ local FlagManager = {}
 local REGION_OWNERS_FOLDER_NAME = "Region_owners"
 
 local DEFAULT_TEAM_OWNER = 0
-local DEFAULT_OWNERSHIP_RADIUS = 100
+local DEFAULT_OWNERSHIP_RADIUS = 150
+local DEFAULT_CAPTURE_TIME = 10
 
 local function getRegionOwnersFolder()
 	return Workspace:FindFirstChild(REGION_OWNERS_FOLDER_NAME)
@@ -19,6 +20,47 @@ end
 
 local function getFlagColorPart(flag)
 	return flag:FindFirstChild("team_owner")
+end
+
+local function getMaxHealth(flag)
+	return math.max(0, tonumber(flag:GetAttribute("Max_health")) or 0)
+end
+
+local function getCurrentHealth(flag)
+	return math.max(0, tonumber(flag:GetAttribute("Current_health")) or 0)
+end
+
+function FlagManager.IsDestroyed(flag)
+	return flag:GetAttribute("Destroyed") == true
+		or getCurrentHealth(flag) <= 0
+end
+
+function FlagManager.SetDestroyed(flag, destroyed)
+	destroyed = destroyed == true
+	flag:SetAttribute("Destroyed", destroyed)
+
+	if destroyed then
+		flag:SetAttribute("Contested", false)
+		flag:SetAttribute("CaptureProgress", 0)
+		flag:SetAttribute("CaptureTeam", 0)
+
+		if not FlagManager.IsBaseFlag(flag) then
+			flag:SetAttribute("TeamOwner", DEFAULT_TEAM_OWNER)
+		end
+
+		FlagManager.PaintFlag(flag)
+	end
+end
+
+function FlagManager.GetCaptureTime(flag)
+	local captureTime = tonumber(flag:GetAttribute("Capture_time"))
+
+	if captureTime == nil then
+		captureTime = DEFAULT_CAPTURE_TIME
+		flag:SetAttribute("Capture_time", captureTime)
+	end
+
+	return math.max(0.1, captureTime)
 end
 
 function FlagManager.IsFlag(model)
@@ -95,6 +137,31 @@ function FlagManager.SetupFlag(flag)
 
 	FlagManager.GetTeamOwner(flag)
 	FlagManager.GetOwnershipRadius(flag)
+	FlagManager.GetCaptureTime(flag)
+
+	if flag:GetAttribute("Show_name") == nil then
+		flag:SetAttribute("Show_name", flag.Name)
+	end
+
+	local maxHealth = getMaxHealth(flag)
+	local currentHealth = getCurrentHealth(flag)
+
+	if flag:GetAttribute("Current_health") == nil and maxHealth > 0 then
+		flag:SetAttribute("Current_health", maxHealth)
+		currentHealth = maxHealth
+	end
+
+	if flag:GetAttribute("CaptureProgress") == nil then
+		flag:SetAttribute("CaptureProgress", 0)
+	end
+	if flag:GetAttribute("CaptureTeam") == nil then
+		flag:SetAttribute("CaptureTeam", 0)
+	end
+	if flag:GetAttribute("Contested") == nil then
+		flag:SetAttribute("Contested", false)
+	end
+
+	FlagManager.SetDestroyed(flag, currentHealth <= 0)
 	FlagManager.PaintFlag(flag)
 
 	local main = getFlagMain(flag)

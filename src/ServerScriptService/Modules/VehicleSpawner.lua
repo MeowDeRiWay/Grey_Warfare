@@ -4,6 +4,7 @@ local Players = game:GetService("Players")
 
 local VehicleDriveController = require(script.Parent.VehicleDriveController)
 local HelicopterDriveController = require(script.Parent.HelicopterDriveController)
+local PlaneDriveController = require(script.Parent.PlaneDriveController)
 local VehicleModuleManager = require(script.Parent.VehicleModuleManager)
 local VehicleConfigManager = require(script.Parent.VehicleConfigManager)
 local TeamColors = require(script.Parent.TeamColors)
@@ -64,6 +65,11 @@ local function paintVehicle(vehicle, teamOwner)
 	end
 end
 
+local function isPlane(vehicle)
+	return vehicle:GetAttribute("Plane") == true
+		or vehicle:GetAttribute("VehicleType") == "Plane"
+end
+
 local function prepareVehicle(vehicle)
 	local main = getMain(vehicle)
 
@@ -76,8 +82,8 @@ local function prepareVehicle(vehicle)
 			item.AssemblyLinearVelocity = Vector3.zero
 			item.AssemblyAngularVelocity = Vector3.zero
 
-			if vehicle:GetAttribute("VehicleType") == "Helicopter" then
-				-- Гелік рухається аркадно через PivotTo, тому фізика вимкнена.
+			if vehicle:GetAttribute("VehicleType") == "Helicopter" or isPlane(vehicle) then
+				-- Гелік і літак рухаються аркадно через PivotTo.
 				item.Anchored = true
 			else
 				item.Anchored = false
@@ -87,7 +93,9 @@ local function prepareVehicle(vehicle)
 end
 
 local function unregisterAnyVehicle(vehicle)
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+	if isPlane(vehicle) then
+		PlaneDriveController.UnregisterVehicle(vehicle)
+	elseif vehicle:GetAttribute("VehicleType") == "Helicopter" then
 		HelicopterDriveController.UnregisterVehicle(vehicle)
 	else
 		VehicleDriveController.UnregisterVehicle(vehicle)
@@ -183,7 +191,9 @@ local function getTemplate(folderName, vehicleName)
 end
 
 local function registerController(vehicle, player)
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+	if isPlane(vehicle) then
+		PlaneDriveController.RegisterVehicle(vehicle, player)
+	elseif vehicle:GetAttribute("VehicleType") == "Helicopter" then
 		HelicopterDriveController.RegisterVehicle(vehicle, player)
 	else
 		VehicleDriveController.RegisterVehicle(vehicle, player)
@@ -218,7 +228,53 @@ local function getHelicopterSpawnCFrame(vehicle, spawnCFrame)
 	return CFrame.new(spawnPosition) * CFrame.Angles(0, math.rad(yaw), 0)
 end
 
+local function getPlaneSpawnCFrame(vehicle, spawnCFrame)
+	local clearance = tonumber(vehicle:GetAttribute("Spawn_clearance")) or 0.5
+
+	-- spawnCFrame тут уже є саме PIVOT PSpawn (BasePart:GetPivot()),
+	-- а не геометричний центр самого MeshPart.
+	-- Тому X/Z літака ставимо точно над Pivot PSpawn.І
+	local forward = -spawnCFrame.RightVector
+	forward = Vector3.new(forward.X, 0, forward.Z)
+
+	if forward.Magnitude < 0.001 then
+		forward = Vector3.new(-1, 0, 0)
+	else
+		forward = forward.Unit
+	end
+
+	local localX = -forward
+	local up = Vector3.yAxis
+	local localZ = localX:Cross(up).Unit
+
+	-- Не припускаємо, що Main стоїть у геометричному центрі літака.
+	-- Визначаємо реальний BoundingBox і його зміщення від model pivot,
+	-- після чого ставимо НИЗ BoundingBox на PSpawn.Y + clearance.
+	local currentPivot = vehicle:GetPivot()
+	local boxCFrame, boxSize = vehicle:GetBoundingBox()
+	local pivotToBox = currentPivot:ToObjectSpace(boxCFrame)
+
+	local desiredBoxCenter = Vector3.new(
+		spawnCFrame.Position.X,
+		spawnCFrame.Position.Y + clearance + (boxSize.Y / 2),
+		spawnCFrame.Position.Z
+	)
+
+	local desiredBoxCFrame = CFrame.fromMatrix(
+		desiredBoxCenter,
+		localX,
+		up,
+		localZ
+	)
+
+	return desiredBoxCFrame * pivotToBox:Inverse()
+end
+
 local function getSpawnCFrame(vehicle, spawnCFrame)
+	if isPlane(vehicle) then
+		return getPlaneSpawnCFrame(vehicle, spawnCFrame)
+	end
+
 	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
 		return getHelicopterSpawnCFrame(vehicle, spawnCFrame)
 	end
@@ -286,7 +342,7 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 
 	protectDriverSeat(vehicle)
 
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" then
+	if vehicle:GetAttribute("VehicleType") == "Helicopter" or isPlane(vehicle) then
 		registerController(vehicle, player)
 		seatOwner(player, vehicle)
 	else

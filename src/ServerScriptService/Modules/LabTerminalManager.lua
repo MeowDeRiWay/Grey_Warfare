@@ -7,8 +7,22 @@ local VehicleConfigManager = require(script.Parent.VehicleConfigManager)
 local LabTerminalManager = {}
 
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
-local VEHICLES_FOLDER_NAME = "Vehicles"
-local VMODULES_FOLDER_NAME = "VModules"
+-- One laboratory reads all current vehicle families.
+-- Keep vehicle template names unique across these folders because
+-- VehicleConfigManager currently keys configs by vehicle name.
+local VEHICLE_FOLDER_NAMES = {
+	"Vehicles",
+	"Heli",
+	"Planes",
+}
+
+-- Real project module layout:
+-- Vehicles/VModules, Heli/HModules, Planes/PModules.
+local MODULE_FOLDER_BY_FAMILY = {
+	Vehicles = "VModules",
+	Heli = "HModules",
+	Planes = "PModules",
+}
 local REMOTE_NAME = "LabTerminalRemote"
 
 local PROMPT_ACTION_TEXT = "Open"
@@ -41,16 +55,44 @@ local function getRemote()
 	return remote
 end
 
-local function getVehiclesFolder()
-	return ReplicatedStorage:FindFirstChild(VEHICLES_FOLDER_NAME)
+local function getVehicleFolders()
+	local result = {}
+
+	for _, folderName in ipairs(VEHICLE_FOLDER_NAMES) do
+		local folder = ReplicatedStorage:FindFirstChild(folderName)
+		if folder and folder:IsA("Folder") then
+			table.insert(result, {
+				Name = folderName,
+				Folder = folder,
+			})
+		end
+	end
+
+	return result
 end
 
-local function getModulesFolder()
-	local vehiclesFolder = getVehiclesFolder()
-	if not vehiclesFolder then
-		return nil
+local function getModuleFolders()
+	local result = {}
+	local seen = {}
+
+	local function addFolder(folder)
+		if folder
+			and folder:IsA("Folder")
+			and not seen[folder]
+		then
+			seen[folder] = true
+			table.insert(result, folder)
+		end
 	end
-	return vehiclesFolder:FindFirstChild(VMODULES_FOLDER_NAME)
+
+	for _, source in ipairs(getVehicleFolders()) do
+		local moduleFolderName = MODULE_FOLDER_BY_FAMILY[source.Name]
+		if moduleFolderName then
+			addFolder(source.Folder:FindFirstChild(moduleFolderName))
+		end
+	end
+
+	return result
 end
 
 local function getScreen(object)
@@ -117,23 +159,38 @@ end
 
 local function buildVehicleList()
 	local result = {}
-	local vehiclesFolder = getVehiclesFolder()
-	if not vehiclesFolder then
-		return result
-	end
+	local seenNames = {}
 
-	for _, item in ipairs(vehiclesFolder:GetChildren()) do
-		if item:IsA("Model") then
-			table.insert(result, {
-				Name = item.Name,
-				DisplayName = item:GetAttribute("DisplayName") or item.Name,
-				Sockets = collectSockets(item),
-			})
+	for _, source in ipairs(getVehicleFolders()) do
+		for _, item in ipairs(source.Folder:GetChildren()) do
+			if item:IsA("Model") then
+				if seenNames[item.Name] then
+					warn(
+						"[LabTerminalManager] Duplicate vehicle name across folders:",
+						item.Name,
+						"Folder:",
+						source.Name,
+						"Configs use vehicle name as key, so duplicate skipped."
+					)
+				else
+					seenNames[item.Name] = true
+
+					table.insert(result, {
+						Name = item.Name,
+						DisplayName = item:GetAttribute("DisplayName") or item.Name,
+						Category = source.Name,
+						Sockets = collectSockets(item),
+					})
+				end
+			end
 		end
 	end
 
 	table.sort(result, function(a, b)
-		return a.Name < b.Name
+		if a.Category == b.Category then
+			return a.Name < b.Name
+		end
+		return a.Category < b.Category
 	end)
 
 	return result
@@ -141,20 +198,32 @@ end
 
 local function buildModuleList()
 	local result = {}
-	local modulesFolder = getModulesFolder()
-	if not modulesFolder then
-		return result
-	end
+	local seenNames = {}
 
-	for _, item in ipairs(modulesFolder:GetChildren()) do
-		if item:IsA("Model") and item:GetAttribute("Module") == true then
-			table.insert(result, {
-				Name = item.Name,
-				DisplayName = item:GetAttribute("DisplayName") or item.Name,
-				ModuleRole = item:GetAttribute("ModuleRole") or "",
-				ModuleType = item:GetAttribute("ModuleType") or item.Name,
-				Sockets = collectSockets(item),
-			})
+	for _, modulesFolder in ipairs(getModuleFolders()) do
+		for _, item in ipairs(modulesFolder:GetChildren()) do
+			if item:IsA("Model") and item:GetAttribute("Module") == true then
+				if seenNames[item.Name] then
+					warn(
+						"[LabTerminalManager] Duplicate module name:",
+						item.Name,
+						"Folder:",
+						modulesFolder:GetFullName(),
+						"Duplicate skipped."
+					)
+				else
+					seenNames[item.Name] = true
+
+					table.insert(result, {
+						Name = item.Name,
+						DisplayName = item:GetAttribute("DisplayName") or item.Name,
+						ModuleRole = item:GetAttribute("ModuleRole") or "",
+						ModuleType = item:GetAttribute("ModuleType") or item.Name,
+						SourceFolder = modulesFolder:GetFullName(),
+						Sockets = collectSockets(item),
+					})
+				end
+			end
 		end
 	end
 
@@ -166,11 +235,23 @@ local function buildModuleList()
 end
 
 local function sendData(player)
+	local vehicles = buildVehicleList()
+	local modules = buildModuleList()
+
 	getRemote():FireClient(player, "Data", {
-		Vehicles = buildVehicleList(),
-		Modules = buildModuleList(),
+		Vehicles = vehicles,
+		Modules = modules,
 		Configs = VehicleConfigManager.GetAllConfigs(player),
 	})
+
+	print(
+		"[LabTerminalManager] Unified data sent (VModules/HModules/PModules):",
+		player.Name,
+		"Vehicles:",
+		#vehicles,
+		"Modules:",
+		#modules
+	)
 end
 
 local function setupPrompt(object)

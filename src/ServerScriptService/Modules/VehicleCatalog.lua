@@ -6,7 +6,8 @@ VehicleCatalog.Terminals = {
 		SpawnPartName = "WSpawn",
 		PromptText = "Vehicle Terminal",
 		AllowedVehicles = {
-			Unicar = true,
+			Baggy = true,
+			Truck = true,
 		},
 	},
 
@@ -16,6 +17,15 @@ VehicleCatalog.Terminals = {
 		PromptText = "Heli Terminal",
 		AllowedVehicles = {
 			Cargo_Heli = true,
+		},
+	},
+
+	PlanePlatform = {
+		FolderName = "Planes",
+		SpawnPartName = "PSpawn",
+		PromptText = "Plane Terminal",
+		AllowedVehicles = {
+			Interceptor_plane = true,
 		},
 	},
 }

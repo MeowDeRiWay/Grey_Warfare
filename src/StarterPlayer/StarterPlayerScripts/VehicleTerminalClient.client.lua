@@ -12,7 +12,8 @@ local VEHICLE_BUTTONS = {
 	VehicleTerminal = {
 		Title = "Vehicle Terminal",
 		Vehicles = {
-			{ Name = "Unicar", Text = "Spawn Unicar" },
+			{ Name = "Baggy", Text = "Spawn Baggy" },
+			{ Name = "Truck", Text = "Spawn Truck" },
 		},
 	},
 
@@ -20,6 +21,13 @@ local VEHICLE_BUTTONS = {
 		Title = "Helicopter Terminal",
 		Vehicles = {
 			{ Name = "Cargo_Heli", Text = "Spawn Cargo Helicopter" },
+		},
+	},
+
+	PlanePlatform = {
+		Title = "Plane Terminal",
+		Vehicles = {
+			{ Name = "Interceptor_plane", Text = "Spawn Interceptor" },
 		},
 	},
 }
@@ -94,11 +102,17 @@ vehicleSpawnRemote.OnClientEvent:Connect(function(action, terminal)
 		return
 	end
 
-	currentTerminal = terminal
+	if not terminal or not terminal:IsA("Model") then
+		return
+	end
 
 	local objectType = terminal:GetAttribute("ObjectType")
-	local config = VEHICLE_BUTTONS[objectType] or VEHICLE_BUTTONS.VehicleTerminal
+	local config = VEHICLE_BUTTONS[objectType]
+	if not config then
+		return
+	end
 
+	currentTerminal = terminal
 	title.Text = config.Title
 	clearVehicleButtons()
 

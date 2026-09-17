@@ -159,27 +159,39 @@ local function getVehicleFromModule(module)
 	return nil
 end
 
-local function getCargoModule(vehicle)
+local function getCargoModules(vehicle)
+	local result = {}
+
 	local folder = getMountedModulesFolder(vehicle)
 	if not folder then
-		return nil
+		return result
 	end
 
 	for _, module in ipairs(folder:GetChildren()) do
-		if module:IsA("Model") and module:GetAttribute("Module") == true then
-			if module:GetAttribute("ModuleRole") == "Cargo" then
-				return module
-			end
+		if module:IsA("Model")
+			and module:GetAttribute("Module") == true
+			and module:GetAttribute("ModuleRole") == "Cargo"
+		then
+			table.insert(result, module)
 		end
 	end
 
-	return nil
+	return result
 end
 
 local function getCargoTarget(vehicle)
-	local cargoModule = getCargoModule(vehicle)
-	if cargoModule then
-		return cargoModule
+	local cargoModules = getCargoModules(vehicle)
+
+	for _, cargoModule in ipairs(cargoModules) do
+		local current = tonumber(cargoModule:GetAttribute("Current_cargo")) or 0
+
+		if current > 0 then
+			return cargoModule
+		end
+	end
+
+	if #cargoModules > 0 then
+		return cargoModules[1]
 	end
 
 	if vehicle and vehicle:GetAttribute("Max_cargo") ~= nil then
@@ -441,30 +453,71 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	local cargoTarget = getCargoTarget(vehicle)
-	if not cargoTarget then
-		return
-	end
-
-	local vehicleCurrent = tonumber(cargoTarget:GetAttribute("Current_cargo")) or 0
-	local vehicleMax = tonumber(cargoTarget:GetAttribute("Max_cargo")) or 0
 	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
 
-	if vehicleMax <= 0 or vehicleCurrent >= vehicleMax or warehouseCurrent <= 0 then
+	if warehouseCurrent <= 0 then
 		return
 	end
 
-	local transfer = vehicleMax * CARGO_TRANSFER_RATE * dt
-	transfer = math.min(transfer, vehicleMax - vehicleCurrent, warehouseCurrent)
+	local cargoModules = getCargoModules(vehicle)
 
-	if transfer <= 0 then
-		return
+	-- Якщо модулів немає, підтримуємо старий варіант,
+	-- де Cargo зберігається прямо на машині.
+	if #cargoModules == 0 then
+		if vehicle:GetAttribute("Max_cargo") == nil then
+			return
+		end
+
+		cargoModules = { vehicle }
 	end
 
-	cargoTarget:SetAttribute("Current_cargo", vehicleCurrent + transfer)
-	warehouse:SetAttribute("Current_cargo", warehouseCurrent - transfer)
+	for _, cargoTarget in ipairs(cargoModules) do
+		if warehouseCurrent <= 0 then
+			break
+		end
 
-	dprint("[WarehouseManager V6] LOAD cargo:", vehicle.Name, "->", cargoTarget.Name, "+", transfer)
+		local vehicleCurrent =
+			tonumber(cargoTarget:GetAttribute("Current_cargo")) or 0
+
+		local vehicleMax =
+			tonumber(cargoTarget:GetAttribute("Max_cargo")) or 0
+
+		if vehicleMax > 0 and vehicleCurrent < vehicleMax then
+
+			local transfer =
+				vehicleMax * CARGO_TRANSFER_RATE * dt
+
+			transfer = math.min(
+				transfer,
+				vehicleMax - vehicleCurrent,
+				warehouseCurrent
+			)
+
+			if transfer > 0 then
+				cargoTarget:SetAttribute(
+					"Current_cargo",
+					vehicleCurrent + transfer
+				)
+
+				warehouseCurrent -= transfer
+
+				warehouse:SetAttribute(
+					"Current_cargo",
+					warehouseCurrent
+				)
+
+				dprint(
+					"[WarehouseManager V6] LOAD cargo:",
+					vehicle.Name,
+					"->",
+					cargoTarget.Name,
+					cargoTarget:GetAttribute("SocketName"),
+					"+",
+					transfer
+				)
+			end
+		end
+	end
 end
 
 local function unloadVehicleToWarehouse(vehicle, warehouse, dt)

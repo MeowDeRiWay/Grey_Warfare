@@ -106,31 +106,21 @@ function HUDShared.makeText(parent, name, position, size, textSize, align)
 	return label
 end
 
+function HUDShared.getHP(object)
+	local current = HUDShared.getNumber(object, {"HP_cur"}, 0)
+	local max = HUDShared.getNumber(object, {"HP_max"}, current)
+	return current, max
+end
+
 function HUDShared.getFuel(vehicle)
-	local current = HUDShared.getNumber(
-		vehicle,
-		{"Current_fuel", "Fuel_current", "CurrentFuel", "Fuel"},
-		0
-	)
-	local max = HUDShared.getNumber(
-		vehicle,
-		{"Max_fuel", "Fuel_max", "MaxFuel", "Fuel_capacity", "FuelCapacity"},
-		0
-	)
+	local current = HUDShared.getNumber(vehicle, {"Fuel_cur"}, 0)
+	local max = HUDShared.getNumber(vehicle, {"Fuel_max"}, 0)
 	return current, max
 end
 
 function HUDShared.getCargo(vehicle)
-	local current = HUDShared.getNumber(
-		vehicle,
-		{"Current_cargo", "Cargo_current", "Loaded_cargo", "Cargo", "CurrentCargo"},
-		nil
-	)
-	local max = HUDShared.getNumber(
-		vehicle,
-		{"Max_cargo", "Cargo_max", "Cargo_capacity", "MaxCargo"},
-		nil
-	)
+	local current = HUDShared.getNumber(vehicle, {"Cargo_cur"}, nil)
+	local max = HUDShared.getNumber(vehicle, {"Cargo_max"}, nil)
 
 	if current ~= nil or max ~= nil then
 		return current or 0, max or 0
@@ -141,8 +131,8 @@ function HUDShared.getCargo(vehicle)
 	if mounted then
 		for _, item in ipairs(mounted:GetDescendants()) do
 			if item:IsA("Model") and item:GetAttribute("ModuleRole") == "Cargo" then
-				current += HUDShared.getNumber(item, {"Current_cargo", "CurrentCargo"}, 0)
-				max += HUDShared.getNumber(item, {"Max_cargo", "MaxCargo"}, 0)
+				current += HUDShared.getNumber(item, {"Cargo_cur"}, 0)
+				max += HUDShared.getNumber(item, {"Cargo_max"}, 0)
 			end
 		end
 	end

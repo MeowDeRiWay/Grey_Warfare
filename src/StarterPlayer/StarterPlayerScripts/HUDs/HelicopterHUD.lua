@@ -37,17 +37,14 @@ end
 
 function HelicopterHUD.SetEnabled(value)
 	if gui then gui.Enabled = value end
-	if not value then
-		lastY, lastT, smoothVS = nil, nil, 0
-	end
+	if not value then lastY, lastT, smoothVS = nil, nil, 0 end
 end
 
 function HelicopterHUD.Update(vehicle)
 	if not vehicle then return end
 	title.Text = tostring(vehicle:GetAttribute("DisplayName") or vehicle.Name)
 
-	local ch = Shared.getNumber(vehicle, {"Current_health", "Health"}, 0)
-	local mh = Shared.getNumber(vehicle, {"Max_health", "MaxHealth"}, ch)
+	local ch, mh = Shared.getHP(vehicle)
 	hp.Text = string.format("HP      %d / %d", ch, mh)
 
 	local cf, mf = Shared.getFuel(vehicle)

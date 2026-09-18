@@ -13,28 +13,16 @@ local explodingVehicles = {}
 local started = false
 
 local function getMain(model)
-	if not model then
-		return nil
-	end
-
+	if not model then return nil end
 	local main = model:FindFirstChild("Main", true)
-	if main and main:IsA("BasePart") then
-		return main
-	end
-
-	if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
-		return model.PrimaryPart
-	end
-
+	if main and main:IsA("BasePart") then return main end
+	if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then return model.PrimaryPart end
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function getMountedModulesFolder(vehicle)
 	local folder = vehicle and vehicle:FindFirstChild("MountedModules")
-	if folder and folder:IsA("Folder") then
-		return folder
-	end
-	return nil
+	return folder and folder:IsA("Folder") and folder or nil
 end
 
 local function getCargoAmount(vehicle)
@@ -46,26 +34,21 @@ local function getCargoAmount(vehicle)
 		for _, item in ipairs(mounted:GetDescendants()) do
 			if item:IsA("Model") and item:GetAttribute("ModuleRole") == "Cargo" then
 				foundCargoModule = true
-				cargo += tonumber(item:GetAttribute("Current_cargo")) or 0
+				cargo += tonumber(item:GetAttribute("Cargo_cur")) or 0
 			end
 		end
 	end
 
-	-- VehicleModuleManager may mirror cargo values onto the vehicle itself.
-	-- If a real Cargo module exists, use the module values only so cargo is not counted twice.
 	if foundCargoModule then
 		return math.max(0, cargo)
 	end
 
-	return math.max(0, tonumber(vehicle:GetAttribute("Current_cargo")) or 0)
+	return math.max(0, tonumber(vehicle:GetAttribute("Cargo_cur")) or 0)
 end
 
 local function getAmmoValue(vehicle)
 	local mounted = getMountedModulesFolder(vehicle)
-	if not mounted then
-		return 0
-	end
-
+	if not mounted then return 0 end
 	local total = 0
 
 	for _, module in ipairs(mounted:GetDescendants()) do
@@ -75,23 +58,12 @@ local function getAmmoValue(vehicle)
 				local price = tonumber(module:GetAttribute("Magazine_cargo_price"))
 					or tonumber(module:GetAttribute("Cargo_per_mag"))
 					or DEFAULT_MAG_CARGO_COST
-
-				if price < 0 then
-					price = 0
-				end
-
-				total += magazines * price
+				total += magazines * math.max(0, price)
 			end
 
-			-- Physical rocket ammunition is stored as real models inside
-			-- Ammo_module* sockets. LoadedAmmo is the source of truth.
 			if module:GetAttribute("LoadedAmmo") == true then
-				local rocketCost =
-					tonumber(module:GetAttribute("Cargo_cost")) or 0
-
-				if rocketCost > 0 then
-					total += rocketCost
-				end
+				local rocketCost = tonumber(module:GetAttribute("Cargo_cost")) or 0
+				if rocketCost > 0 then total += rocketCost end
 			end
 		end
 	end
@@ -101,33 +73,22 @@ end
 
 local function findDamageTarget(instance)
 	local current = instance
-
 	while current and current ~= Workspace do
-		if current:GetAttribute("Current_health") ~= nil
-			or current:GetAttribute("Health") ~= nil
-		then
+		if current:GetAttribute("HP_cur") ~= nil then
 			return current
 		end
-
 		if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
 			return current
 		end
-
 		current = current.Parent
 	end
-
 	return nil
 end
 
 local function damageHumanoidIfPresent(target, damage, newHealth)
-	if not target or not target:IsA("Model") then
-		return
-	end
-
+	if not target or not target:IsA("Model") then return end
 	local humanoid = target:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return
-	end
+	if not humanoid then return end
 
 	if newHealth ~= nil then
 		humanoid.Health = math.clamp(newHealth, 0, humanoid.MaxHealth)
@@ -138,26 +99,15 @@ end
 
 function VehicleDamageManager.ApplyDamage(target, damage)
 	damage = tonumber(damage) or 0
-	if not target or damage <= 0 then
-		return 0
-	end
+	if not target or damage <= 0 then return 0 end
 
-	local currentHealth = target:GetAttribute("Current_health")
-	if currentHealth ~= nil then
-		currentHealth = tonumber(currentHealth) or 0
-		local newHealth = math.max(0, currentHealth - damage)
-		target:SetAttribute("Current_health", newHealth)
-		damageHumanoidIfPresent(target, damage, newHealth)
-		return currentHealth - newHealth
-	end
-
-	local health = target:GetAttribute("Health")
-	if health ~= nil then
-		health = tonumber(health) or 0
-		local newHealth = math.max(0, health - damage)
-		target:SetAttribute("Health", newHealth)
-		damageHumanoidIfPresent(target, damage, newHealth)
-		return health - newHealth
+	local hp = target:GetAttribute("HP_cur")
+	if hp ~= nil then
+		hp = tonumber(hp) or 0
+		local newHP = math.max(0, hp - damage)
+		target:SetAttribute("HP_cur", newHP)
+		damageHumanoidIfPresent(target, damage, newHP)
+		return hp - newHP
 	end
 
 	local humanoid = target:IsA("Model") and target:FindFirstChildOfClass("Humanoid")
@@ -171,56 +121,42 @@ function VehicleDamageManager.ApplyDamage(target, damage)
 end
 
 local function getExplosionStats(vehicle)
-	local ammoValue = getAmmoValue(vehicle) -- A * B, summed across ammo modules
-	local cargo = getCargoAmount(vehicle) -- C and G in the requested formulas
+	local ammoValue = getAmmoValue(vehicle)
+	local cargo = getCargoAmount(vehicle)
 	local baseRadius = tonumber(vehicle:GetAttribute("Explosion_base_radius")) or DEFAULT_BASE_RADIUS
 	baseRadius = math.max(DEFAULT_BASE_RADIUS, baseRadius)
-
-	local damage = ammoValue + cargo / 10
-	local radius = baseRadius + cargo / 10
-
-	return damage, radius, ammoValue, cargo
+	return ammoValue + cargo / 10, baseRadius + cargo / 10, ammoValue, cargo
 end
 
 local function ejectOccupants(vehicle)
 	for _, item in ipairs(vehicle:GetDescendants()) do
 		if item:IsA("Seat") or item:IsA("VehicleSeat") then
 			local humanoid = item.Occupant
-			if humanoid then
-				humanoid.Sit = false
-			end
+			if humanoid then humanoid.Sit = false end
 		end
 	end
 end
 
 local function applyExplosionAreaDamage(vehicle, position, damage, radius)
-	if damage <= 0 or radius <= 0 then
-		return
-	end
+	if damage <= 0 or radius <= 0 then return end
 
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
+	params.FilterDescendantsInstances = {vehicle}
 	params.MaxParts = 0
 
-	local parts = Workspace:GetPartBoundsInRadius(position, radius, params)
 	local damagedTargets = {}
-
-	for _, part in ipairs(parts) do
+	for _, part in ipairs(Workspace:GetPartBoundsInRadius(position, radius, params)) do
 		local target = findDamageTarget(part)
 		if target and target ~= vehicle and not damagedTargets[target] then
 			damagedTargets[target] = true
-			-- For now the requested formula is the actual damage inside the radius.
-			-- No distance falloff is added unless we decide to add it later.
 			VehicleDamageManager.ApplyDamage(target, damage)
 		end
 	end
 end
 
 function VehicleDamageManager.ExplodeVehicle(vehicle)
-	if not vehicle or not vehicle.Parent or explodingVehicles[vehicle] then
-		return
-	end
+	if not vehicle or not vehicle.Parent or explodingVehicles[vehicle] then return end
 
 	explodingVehicles[vehicle] = true
 	vehicle:SetAttribute("Destroyed", true)
@@ -229,13 +165,8 @@ function VehicleDamageManager.ExplodeVehicle(vehicle)
 	local position = main and main.Position or vehicle:GetPivot().Position
 	local damage, radius, ammoValue, cargo = getExplosionStats(vehicle)
 
-	print(
-		"[VehicleDamageManager] EXPLODE:", vehicle.Name,
-		"Damage:", damage,
-		"Radius:", radius,
-		"AmmoValue:", ammoValue,
-		"Cargo:", cargo
-	)
+	print("[VehicleDamageManager] EXPLODE:", vehicle.Name,
+		"Damage:", damage, "Radius:", radius, "AmmoValue:", ammoValue, "Cargo:", cargo)
 
 	ejectOccupants(vehicle)
 	applyExplosionAreaDamage(vehicle, position, damage, radius)
@@ -250,45 +181,29 @@ function VehicleDamageManager.ExplodeVehicle(vehicle)
 	registeredVehicles[vehicle] = nil
 
 	task.defer(function()
-		if vehicle and vehicle.Parent then
-			vehicle:Destroy()
-		end
+		if vehicle and vehicle.Parent then vehicle:Destroy() end
 		explodingVehicles[vehicle] = nil
 	end)
 end
 
 local function checkVehicleDeath(vehicle)
-	if not vehicle or not vehicle.Parent or explodingVehicles[vehicle] then
-		return
-	end
-
-	local currentHealth = vehicle:GetAttribute("Current_health")
-	if currentHealth == nil then
-		currentHealth = vehicle:GetAttribute("Health")
-	end
-
-	if currentHealth ~= nil and (tonumber(currentHealth) or 0) <= 0 then
+	if not vehicle or not vehicle.Parent or explodingVehicles[vehicle] then return end
+	local hp = tonumber(vehicle:GetAttribute("HP_cur"))
+	if hp ~= nil and hp <= 0 then
 		VehicleDamageManager.ExplodeVehicle(vehicle)
 	end
 end
 
 function VehicleDamageManager.RegisterVehicle(vehicle)
-	if not vehicle or not vehicle:IsA("Model") or registeredVehicles[vehicle] then
-		return
-	end
-
+	if not vehicle or not vehicle:IsA("Model") or registeredVehicles[vehicle] then return end
 	registeredVehicles[vehicle] = true
 
-	local maxHealth = tonumber(vehicle:GetAttribute("Max_health"))
-	if maxHealth and vehicle:GetAttribute("Current_health") == nil then
-		vehicle:SetAttribute("Current_health", maxHealth)
+	local hpMax = tonumber(vehicle:GetAttribute("HP_max"))
+	if hpMax and vehicle:GetAttribute("HP_cur") == nil then
+		vehicle:SetAttribute("HP_cur", hpMax)
 	end
 
-	vehicle:GetAttributeChangedSignal("Current_health"):Connect(function()
-		checkVehicleDeath(vehicle)
-	end)
-
-	vehicle:GetAttributeChangedSignal("Health"):Connect(function()
+	vehicle:GetAttributeChangedSignal("HP_cur"):Connect(function()
 		checkVehicleDeath(vehicle)
 	end)
 
@@ -304,27 +219,18 @@ end
 
 function VehicleDamageManager.ApplyCollisionDamage(vehicle, impactSpeed)
 	impactSpeed = math.abs(tonumber(impactSpeed) or 0)
-	if impactSpeed <= 0 or not vehicle or not vehicle.Parent then
-		return 0
-	end
+	if impactSpeed <= 0 or not vehicle or not vehicle.Parent then return 0 end
 
 	local safeSpeed = tonumber(vehicle:GetAttribute("Collision_safe_speed")) or DEFAULT_COLLISION_SAFE_SPEED
 	local multiplier = tonumber(vehicle:GetAttribute("Collision_damage_multiplier")) or DEFAULT_COLLISION_DAMAGE_MULTIPLIER
-
 	local damage = math.max(0, impactSpeed - safeSpeed) * math.max(0, multiplier)
-	if damage <= 0 then
-		return 0
-	end
+	if damage <= 0 then return 0 end
 
 	VehicleDamageManager.RegisterVehicle(vehicle)
 	local applied = VehicleDamageManager.ApplyDamage(vehicle, damage)
 
-	print(
-		"[VehicleDamageManager] COLLISION:", vehicle.Name,
-		"Speed:", impactSpeed,
-		"Damage:", damage,
-		"Applied:", applied
-	)
+	print("[VehicleDamageManager] COLLISION:", vehicle.Name,
+		"Speed:", impactSpeed, "Damage:", damage, "Applied:", applied)
 
 	return applied
 end
@@ -332,16 +238,11 @@ end
 local hookedFolders = {}
 
 local function hookActiveVehiclesFolder(folder)
-	if not folder or not folder:IsA("Folder") or hookedFolders[folder] then
-		return
-	end
-
+	if not folder or not folder:IsA("Folder") or hookedFolders[folder] then return end
 	hookedFolders[folder] = true
 
 	for _, vehicle in ipairs(folder:GetChildren()) do
-		if vehicle:IsA("Model") then
-			VehicleDamageManager.RegisterVehicle(vehicle)
-		end
+		if vehicle:IsA("Model") then VehicleDamageManager.RegisterVehicle(vehicle) end
 	end
 
 	folder.ChildAdded:Connect(function(vehicle)
@@ -354,18 +255,11 @@ local function hookActiveVehiclesFolder(folder)
 end
 
 function VehicleDamageManager.Start()
-	if started then
-		return
-	end
+	if started then return end
 	started = true
 
-	-- IMPORTANT: never yield here. VehicleDamageManager is required while the
-	-- server is still booting, before VehicleSpawner may create ActiveVehicles.
-	-- Waiting here blocks the entire require chain (flags/terminals/spawner too).
 	local existing = Workspace:FindFirstChild(ACTIVE_VEHICLES_FOLDER_NAME)
-	if existing then
-		hookActiveVehiclesFolder(existing)
-	end
+	if existing then hookActiveVehiclesFolder(existing) end
 
 	Workspace.ChildAdded:Connect(function(child)
 		if child.Name == ACTIVE_VEHICLES_FOLDER_NAME and child:IsA("Folder") then

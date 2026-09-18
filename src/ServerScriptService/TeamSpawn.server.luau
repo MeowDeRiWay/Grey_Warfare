@@ -1,29 +1,22 @@
 local Players = game:GetService("Players")
+local ServerScriptService = game:GetService("ServerScriptService")
+local Workspace = game:GetService("Workspace")
 
-local spawnFolder = workspace:WaitForChild("Spawn")
-local lobbyFolder = spawnFolder:WaitForChild("spawn_sky")
+local Modules = ServerScriptService:WaitForChild("Modules")
+local SpawnManager = require(Modules:WaitForChild("SpawnManager"))
 
-local blueChoice = lobbyFolder:WaitForChild("BLUE_TEAM_SPAWN_CHOISE")
-local redChoice = lobbyFolder:WaitForChild("RED_TEAM_SPAWN_CHOISE")
-
-local blueSpawn = spawnFolder:WaitForChild("BLUE_TEAM_START"):WaitForChild("BLUE_MAIN_SPAWN")
-local redSpawn = spawnFolder:WaitForChild("RED_TEAM_START"):WaitForChild("RED_MAIN_SPAWN")
-
-local TEAM_DATA = {
-	Blue = {
-		color = Color3.fromRGB(0, 60, 255),
-		spawn = blueSpawn,
-		teamOwner = 2,
-	},
-
-	Red = {
-		color = Color3.fromRGB(255, 40, 40),
-		spawn = redSpawn,
-		teamOwner = 1,
-	},
+local TEAM_COLORS = {
+	[1] = Color3.fromRGB(255, 40, 40),
+	[2] = Color3.fromRGB(0, 60, 255),
 }
 
-local function getPlayerFromTouchedPart(hit: BasePart)
+local touchCooldown = {}
+
+local function getPlayerFromTouchedPart(hit)
+	if not hit or not hit:IsA("BasePart") then
+		return nil
+	end
+
 	local character = hit:FindFirstAncestorOfClass("Model")
 	if not character then
 		return nil
@@ -32,9 +25,11 @@ local function getPlayerFromTouchedPart(hit: BasePart)
 	return Players:GetPlayerFromCharacter(character)
 end
 
-local function applyTeamVisual(player: Player, teamName: string)
-	local data = TEAM_DATA[teamName]
-	if not data then
+local function applyTeamVisual(player)
+	local teamOwner = tonumber(player:GetAttribute("TeamOwner")) or 0
+	local color = TEAM_COLORS[teamOwner]
+
+	if not color then
 		return
 	end
 
@@ -45,72 +40,112 @@ local function applyTeamVisual(player: Player, teamName: string)
 
 	local helmet = character:FindFirstChild("Helmet", true)
 	if helmet and helmet:IsA("BasePart") then
-		helmet.Color = data.color
+		helmet.Color = color
 	end
 end
 
-local function teleportPlayer(player: Player, teamName: string)
-	local data = TEAM_DATA[teamName]
-	if not data then
+local function selectTeam(player, teamOwner)
+	teamOwner = tonumber(teamOwner)
+
+	if not teamOwner or teamOwner <= 0 then
 		return
 	end
 
-	local character = player.Character
-	if not character then
+	if touchCooldown[player] then
 		return
 	end
-
-	local root = character:FindFirstChild("HumanoidRootPart")
-	if not root or not root:IsA("BasePart") then
-		warn("Character has no HumanoidRootPart")
-		return
-	end
-
-	root.CFrame = data.spawn.CFrame + Vector3.new(0, 3, 0)
-end
-
-local function selectTeam(player: Player, teamName: string)
-	local data = TEAM_DATA[teamName]
-	if not data then
-		return
-	end
+	touchCooldown[player] = true
 
 	player:SetAttribute("TeamSelected", true)
-	player:SetAttribute("TeamName", teamName)
-	player:SetAttribute("TeamOwner", data.teamOwner)
+	player:SetAttribute("TeamOwner", teamOwner)
+	player:SetAttribute("TeamName", tostring(teamOwner))
 
-	print("[TeamSpawn] Player selected team:", player.Name, teamName, "TeamOwner:", data.teamOwner)
+	applyTeamVisual(player)
 
-	applyTeamVisual(player, teamName)
-	teleportPlayer(player, teamName)
+	task.wait()
+
+	if not SpawnManager.SpawnAtMain(player) then
+		warn("[TeamSpawn] Team selected, but Main spawn was not found. Team:", teamOwner)
+	end
+
+	print("[TeamSpawn]", player.Name, "selected Team", teamOwner)
+
+	task.delay(1, function()
+		touchCooldown[player] = nil
+	end)
 end
 
-blueChoice.Touched:Connect(function(hit)
-	local player = getPlayerFromTouchedPart(hit)
-	if player then
-		selectTeam(player, "Blue")
+local function setupTeamSelector(object)
+	if not object:IsA("BasePart") then
+		return
 	end
-end)
 
-redChoice.Touched:Connect(function(hit)
-	local player = getPlayerFromTouchedPart(hit)
-	if player then
-		selectTeam(player, "Red")
+	local newTeam = tonumber(object:GetAttribute("New_team"))
+	if not newTeam or newTeam <= 0 then
+		return
 	end
+
+	if object:GetAttribute("_TeamSelectorConnected") == true then
+		return
+	end
+
+	object:SetAttribute("_TeamSelectorConnected", true)
+
+	object.Touched:Connect(function(hit)
+		local player = getPlayerFromTouchedPart(hit)
+		if player then
+			selectTeam(player, newTeam)
+		end
+	end)
+end
+
+local function setupAllSelectors()
+	for _, object in ipairs(Workspace:GetDescendants()) do
+		setupTeamSelector(object)
+	end
+end
+
+SpawnManager.Start()
+setupAllSelectors()
+
+Workspace.DescendantAdded:Connect(function(object)
+	task.defer(function()
+		setupTeamSelector(object)
+	end)
 end)
 
 Players.PlayerAdded:Connect(function(player)
 	player:SetAttribute("TeamSelected", false)
-	player:SetAttribute("TeamName", "")
 	player:SetAttribute("TeamOwner", 0)
+	player:SetAttribute("TeamName", "")
 
 	player.CharacterAdded:Connect(function()
 		task.wait(0.2)
 
-		local teamName = player:GetAttribute("TeamName")
-		if teamName == "Blue" or teamName == "Red" then
-			applyTeamVisual(player, teamName)
-			teleportPlayer(player, teamName)
+		local teamOwner = tonumber(player:GetAttribute("TeamOwner")) or 0
+
+		if teamOwner > 0 then
+			applyTeamVisual(player)
+			SpawnManager.SpawnAtMain(player)
 		end
 	end)
 end)
+
+Players.PlayerRemoving:Connect(function(player)
+	touchCooldown[player] = nil
+end)
+
+-- Studio can already contain players when the script is restarted.
+for _, player in ipairs(Players:GetPlayers()) do
+	if player:GetAttribute("TeamSelected") == nil then
+		player:SetAttribute("TeamSelected", false)
+	end
+	if player:GetAttribute("TeamOwner") == nil then
+		player:SetAttribute("TeamOwner", 0)
+	end
+	if player:GetAttribute("TeamName") == nil then
+		player:SetAttribute("TeamName", "")
+	end
+end
+
+print("[TeamSpawn] Started: selectors use New_team attribute")

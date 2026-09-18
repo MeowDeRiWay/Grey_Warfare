@@ -34,11 +34,11 @@ local function getFlagColorPart(flag)
 end
 
 local function getMaxHealth(flag)
-	return math.max(0, tonumber(flag:GetAttribute("Max_health")) or 0)
+	return math.max(0, tonumber(flag:GetAttribute("HP_max")) or 0)
 end
 
 local function getCurrentHealth(flag)
-	return math.max(0, tonumber(flag:GetAttribute("Current_health")) or 0)
+	return math.max(0, tonumber(flag:GetAttribute("HP_cur")) or 0)
 end
 
 function FlagManager.IsDestroyed(flag)
@@ -157,8 +157,8 @@ function FlagManager.SetupFlag(flag)
 	local maxHealth = getMaxHealth(flag)
 	local currentHealth = getCurrentHealth(flag)
 
-	if flag:GetAttribute("Current_health") == nil and maxHealth > 0 then
-		flag:SetAttribute("Current_health", maxHealth)
+	if flag:GetAttribute("HP_cur") == nil and maxHealth > 0 then
+		flag:SetAttribute("HP_cur", maxHealth)
 		currentHealth = maxHealth
 	end
 

@@ -6,6 +6,8 @@ local FlagManager = require(script.Parent.FlagManager)
 local TerritoryManager = {}
 
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
+local TEAM_COLOR_PART_NAME = "Team_color"
+local OWNERSHIP_COLOR_ATTRIBUTE = "Ownership_color"
 
 local UPDATE_INTERVAL = 2
 
@@ -13,41 +15,68 @@ local function getBaseObjectsFolder()
 	return Workspace:FindFirstChild(BASE_OBJECTS_FOLDER_NAME)
 end
 
-local function getRootPart(model)
-	if model:IsA("Model") then
-		return model.PrimaryPart
-			or model:FindFirstChild("Main")
-			or model:FindFirstChildWhichIsA("BasePart")
+local function getRootPart(object)
+	if object:IsA("Model") then
+		return object.PrimaryPart
+			or object:FindFirstChild("Main")
+			or object:FindFirstChildWhichIsA("BasePart", true)
 	end
 
-	if model:IsA("BasePart") then
-		return model
-	end
-
-	return nil
-end
-
-local function getColorTarget(object)
-	local screen = object:FindFirstChild("Screen", true)
-	if screen and screen:IsA("BasePart") then
-		return screen
-	end
-
-	local teamOwner = object:FindFirstChild("team_owner", true)
-	if teamOwner and teamOwner:IsA("BasePart") then
-		return teamOwner
+	if object:IsA("BasePart") then
+		return object
 	end
 
 	return nil
 end
 
-local function paintObject(object)
-	local teamOwner = object:GetAttribute("TeamOwner") or 0
-	local colorTarget = getColorTarget(object)
+local function findOwningFlagForPosition(position, flags)
+	local selectedFlag
+	local selectedDistance = math.huge
 
-	if colorTarget then
-		colorTarget.Color = TeamColors.GetColor(teamOwner)
+	for _, flag in ipairs(flags) do
+		local flagRoot = getRootPart(flag)
+
+		if flagRoot then
+			local radius = FlagManager.GetOwnershipRadius(flag)
+			local distance = (position - flagRoot.Position).Magnitude
+
+			if distance <= radius and distance < selectedDistance then
+				selectedFlag = flag
+				selectedDistance = distance
+			end
+		end
 	end
+
+	return selectedFlag
+end
+
+local function getFlagOwner(flag)
+	if not flag or FlagManager.IsDestroyed(flag) then
+		return 0
+	end
+
+	return tonumber(FlagManager.GetTeamOwner(flag)) or 0
+end
+
+local function paintModelTeamColor(object)
+	local teamOwner = tonumber(object:GetAttribute("TeamOwner")) or 0
+
+	for _, descendant in ipairs(object:GetDescendants()) do
+		if descendant:IsA("BasePart") and descendant.Name == TEAM_COLOR_PART_NAME then
+			descendant.Color = TeamColors.GetColor(teamOwner)
+		end
+	end
+end
+
+local function paintOwnershipPart(part, flags)
+	if not part:IsA("BasePart") or part:GetAttribute(OWNERSHIP_COLOR_ATTRIBUTE) ~= true then
+		return
+	end
+
+	local flag = findOwningFlagForPosition(part.Position, flags)
+	local owner = getFlagOwner(flag)
+
+	part.Color = TeamColors.GetColor(owner)
 end
 
 local function setupObject(object)
@@ -64,7 +93,7 @@ local function setupObject(object)
 		object.PrimaryPart = main
 	end
 
-	paintObject(object)
+	paintModelTeamColor(object)
 end
 
 function TerritoryManager.SetupAllObjects()
@@ -81,48 +110,34 @@ function TerritoryManager.SetupAllObjects()
 end
 
 function TerritoryManager.ApplyOwnership()
+	local flags = FlagManager.GetAllFlags()
 	local folder = getBaseObjectsFolder()
 
-	if not folder then
-		return
-	end
+	-- Existing model ownership:
+	-- Base_objects inherit TeamOwner from the nearest flag whose radius contains them.
+	if folder then
+		for _, object in ipairs(folder:GetChildren()) do
+			if object:IsA("Model") then
+				local objectRoot = getRootPart(object)
 
-	local flags = FlagManager.GetAllFlags()
+				if objectRoot then
+					local flag = findOwningFlagForPosition(objectRoot.Position, flags)
 
-	for _, object in ipairs(folder:GetChildren()) do
-		if object:IsA("Model") then
-			local objectRoot = getRootPart(object)
-
-			if objectRoot then
-				local selectedOwner = nil
-				local selectedDistance = math.huge
-
-				for _, flag in ipairs(flags) do
-					local flagRoot = getRootPart(flag)
-
-					if flagRoot then
-						local radius = FlagManager.GetOwnershipRadius(flag)
-						local distance =
-							(objectRoot.Position - flagRoot.Position).Magnitude
-
-						if distance <= radius and distance < selectedDistance then
-							selectedDistance = distance
-
-							if FlagManager.IsDestroyed(flag) then
-								selectedOwner = 0
-							else
-								selectedOwner =
-									tonumber(FlagManager.GetTeamOwner(flag)) or 0
-							end
-						end
+					if flag then
+						object:SetAttribute("TeamOwner", getFlagOwner(flag))
+						paintModelTeamColor(object)
 					end
 				end
-
-				if selectedOwner ~= nil then
-					object:SetAttribute("TeamOwner", selectedOwner)
-					paintObject(object)
-				end
 			end
+		end
+	end
+
+	-- Universal map coloring:
+	-- any BasePart with Ownership_color = true is colored directly
+	-- from the flag territory containing that exact part.
+	for _, object in ipairs(Workspace:GetDescendants()) do
+		if object:IsA("BasePart") and object:GetAttribute(OWNERSHIP_COLOR_ATTRIBUTE) == true then
+			paintOwnershipPart(object, flags)
 		end
 	end
 end
@@ -139,14 +154,21 @@ end
 function TerritoryManager.StartAutoSetup()
 	local folder = getBaseObjectsFolder()
 
-	if not folder then
+	if folder then
+		folder.ChildAdded:Connect(function(child)
+			task.wait(0.1)
+			setupObject(child)
+		end)
+	else
 		warn("[TerritoryManager] Workspace.Base_objects not found")
-		return
 	end
 
-	folder.ChildAdded:Connect(function(child)
-		task.wait(0.1)
-		setupObject(child)
+	Workspace.DescendantAdded:Connect(function(object)
+		task.defer(function()
+			if object:IsA("BasePart") and object:GetAttribute(OWNERSHIP_COLOR_ATTRIBUTE) == true then
+				paintOwnershipPart(object, FlagManager.GetAllFlags())
+			end
+		end)
 	end)
 end
 

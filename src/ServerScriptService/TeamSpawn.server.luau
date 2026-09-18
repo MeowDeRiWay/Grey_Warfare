@@ -4,11 +4,7 @@ local Workspace = game:GetService("Workspace")
 
 local Modules = ServerScriptService:WaitForChild("Modules")
 local SpawnManager = require(Modules:WaitForChild("SpawnManager"))
-
-local TEAM_COLORS = {
-	[1] = Color3.fromRGB(255, 40, 40),
-	[2] = Color3.fromRGB(0, 60, 255),
-}
+local TeamColors = require(Modules:WaitForChild("TeamColors"))
 
 local touchCooldown = {}
 
@@ -27,12 +23,6 @@ end
 
 local function applyTeamVisual(player)
 	local teamOwner = tonumber(player:GetAttribute("TeamOwner")) or 0
-	local color = TEAM_COLORS[teamOwner]
-
-	if not color then
-		return
-	end
-
 	local character = player.Character
 	if not character then
 		return
@@ -40,13 +30,12 @@ local function applyTeamVisual(player)
 
 	local helmet = character:FindFirstChild("Helmet", true)
 	if helmet and helmet:IsA("BasePart") then
-		helmet.Color = color
+		helmet.Color = TeamColors.GetColor(teamOwner)
 	end
 end
 
 local function selectTeam(player, teamOwner)
 	teamOwner = tonumber(teamOwner)
-
 	if not teamOwner or teamOwner <= 0 then
 		return
 	end
@@ -61,7 +50,6 @@ local function selectTeam(player, teamOwner)
 	player:SetAttribute("TeamName", tostring(teamOwner))
 
 	applyTeamVisual(player)
-
 	task.wait()
 
 	if not SpawnManager.SpawnAtMain(player) then
@@ -99,14 +87,11 @@ local function setupTeamSelector(object)
 	end)
 end
 
-local function setupAllSelectors()
-	for _, object in ipairs(Workspace:GetDescendants()) do
-		setupTeamSelector(object)
-	end
-end
-
 SpawnManager.Start()
-setupAllSelectors()
+
+for _, object in ipairs(Workspace:GetDescendants()) do
+	setupTeamSelector(object)
+end
 
 Workspace.DescendantAdded:Connect(function(object)
 	task.defer(function()
@@ -122,9 +107,7 @@ Players.PlayerAdded:Connect(function(player)
 	player.CharacterAdded:Connect(function()
 		task.wait(0.2)
 
-		local teamOwner = tonumber(player:GetAttribute("TeamOwner")) or 0
-
-		if teamOwner > 0 then
+		if (tonumber(player:GetAttribute("TeamOwner")) or 0) > 0 then
 			applyTeamVisual(player)
 			SpawnManager.SpawnAtMain(player)
 		end
@@ -135,7 +118,6 @@ Players.PlayerRemoving:Connect(function(player)
 	touchCooldown[player] = nil
 end)
 
--- Studio can already contain players when the script is restarted.
 for _, player in ipairs(Players:GetPlayers()) do
 	if player:GetAttribute("TeamSelected") == nil then
 		player:SetAttribute("TeamSelected", false)

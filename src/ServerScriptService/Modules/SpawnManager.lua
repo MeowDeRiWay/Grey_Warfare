@@ -38,20 +38,7 @@ local function getSpawnName(object)
 	if typeof(name) == "string" and name ~= "" then
 		return name
 	end
-
 	return object.Name
-end
-
-local function setTeam(object, teamOwner)
-	teamOwner = tonumber(teamOwner) or 0
-
-	if object:GetAttribute("Team") ~= teamOwner then
-		object:SetAttribute("Team", teamOwner)
-	end
-
-	if object:GetAttribute("Team_color") ~= teamOwner then
-		object:SetAttribute("Team_color", teamOwner)
-	end
 end
 
 local function findOwningFlag(object)
@@ -60,12 +47,11 @@ local function findOwningFlag(object)
 		return nil
 	end
 
-	local selectedFlag = nil
+	local selectedFlag
 	local selectedDistance = math.huge
 
 	for _, flag in ipairs(FlagManager.GetAllFlags()) do
 		local flagRoot = getRootPart(flag)
-
 		if flagRoot then
 			local radius = FlagManager.GetOwnershipRadius(flag)
 			local distance = (root.Position - flagRoot.Position).Magnitude
@@ -87,13 +73,13 @@ local function updateDynamicSpawn(object)
 	end
 
 	local flag = findOwningFlag(object)
+	local owner = 0
 
-	if not flag or FlagManager.IsDestroyed(flag) then
-		setTeam(object, 0)
-		return
+	if flag and not FlagManager.IsDestroyed(flag) then
+		owner = tonumber(FlagManager.GetTeamOwner(flag)) or 0
 	end
 
-	setTeam(object, tonumber(FlagManager.GetTeamOwner(flag)) or 0)
+	object:SetAttribute("Team", owner)
 end
 
 function SpawnManager.SetupSpawn(object)
@@ -115,11 +101,9 @@ function SpawnManager.SetupSpawn(object)
 	end
 
 	local team = tonumber(object:GetAttribute("Team")) or 0
-	setTeam(object, team)
 
-	-- Team = 0 at setup means this point follows the flag whose
-	-- OwnershipRadius contains it. After that Team may become 1/2,
-	-- but it remains registered as dynamic.
+	-- Team = 0 at setup marks a dynamic spawn tied to OwnershipRadius.
+	-- Once registered, it stays dynamic even while Team becomes 1 or 2.
 	if team == 0 then
 		dynamicSpawns[object] = true
 		updateDynamicSpawn(object)
@@ -169,8 +153,7 @@ function SpawnManager.GetAvailable(teamOwner, mainOnly)
 end
 
 function SpawnManager.GetMain(teamOwner)
-	local spawns = SpawnManager.GetAvailable(teamOwner, true)
-	return spawns[1]
+	return SpawnManager.GetAvailable(teamOwner, true)[1]
 end
 
 function SpawnManager.TeleportPlayer(player, spawnObject)
@@ -179,14 +162,13 @@ function SpawnManager.TeleportPlayer(player, spawnObject)
 	end
 
 	local character = player.Character
-	if not character then
+	local spawnRoot = getRootPart(spawnObject)
+	if not character or not spawnRoot then
 		return false
 	end
 
 	local root = character:FindFirstChild("HumanoidRootPart")
-	local spawnRoot = getRootPart(spawnObject)
-
-	if not root or not root:IsA("BasePart") or not spawnRoot then
+	if not root or not root:IsA("BasePart") then
 		return false
 	end
 
@@ -201,7 +183,6 @@ function SpawnManager.SpawnAtMain(player)
 	end
 
 	local mainSpawn = SpawnManager.GetMain(teamOwner)
-
 	if not mainSpawn then
 		warn("[SpawnManager] No Main spawn for Team", teamOwner)
 		return false

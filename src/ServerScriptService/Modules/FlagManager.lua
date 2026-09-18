@@ -5,6 +5,7 @@ local TeamColors = require(script.Parent.TeamColors)
 local FlagManager = {}
 
 local REGION_OWNERS_FOLDER_NAME = "Region_owners"
+local TEAM_COLOR_PART_NAME = "Team_color"
 
 local DEFAULT_TEAM_OWNER = 0
 local DEFAULT_OWNERSHIP_RADIUS = 150
@@ -19,7 +20,17 @@ local function getFlagMain(flag)
 end
 
 local function getFlagColorPart(flag)
-	return flag:FindFirstChild("team_owner")
+	local direct = flag:FindFirstChild(TEAM_COLOR_PART_NAME)
+	if direct and direct:IsA("BasePart") then
+		return direct
+	end
+
+	local recursive = flag:FindFirstChild(TEAM_COLOR_PART_NAME, true)
+	if recursive and recursive:IsA("BasePart") then
+		return recursive
+	end
+
+	return nil
 end
 
 local function getMaxHealth(flag)
@@ -121,7 +132,7 @@ end
 function FlagManager.PaintFlag(flag)
 	local colorPart = getFlagColorPart(flag)
 
-	if not colorPart or not colorPart:IsA("BasePart") then
+	if not colorPart then
 		return
 	end
 
@@ -191,9 +202,7 @@ function FlagManager.GetAllFlags()
 end
 
 function FlagManager.SetupAllFlags()
-	local flags = FlagManager.GetAllFlags()
-
-	for _, flag in ipairs(flags) do
+	for _, flag in ipairs(FlagManager.GetAllFlags()) do
 		FlagManager.SetupFlag(flag)
 	end
 end

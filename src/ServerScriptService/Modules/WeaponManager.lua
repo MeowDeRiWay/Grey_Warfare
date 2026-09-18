@@ -360,7 +360,7 @@ function WeaponManager.EquipWeapon(player, weaponName)
 
 	prepareWeaponParts(weapon)
 
-	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
+	local magazineSize = tonumber(weapon:GetAttribute("Ammo_max")) or 7
 	if state.Ammo == nil then
 		state.Ammo = magazineSize
 	else
@@ -379,7 +379,7 @@ function WeaponManager.EquipWeapon(player, weaponName)
 		return nil
 	end
 
-	weapon:SetAttribute("Current_ammo", state.Ammo)
+	weapon:SetAttribute("Ammo_cur", state.Ammo)
 	print("[WeaponManager MAGS V6] Equipped:", player.Name, weaponName)
 	return weapon
 end
@@ -411,7 +411,7 @@ local function reloadWeapon(player)
 
 	ensureCharacterStats(character)
 
-	local magazineSize = tonumber(weapon:GetAttribute("Magazine_size")) or 7
+	local magazineSize = tonumber(weapon:GetAttribute("Ammo_max")) or 7
 
 	-- Повний магазин не перезаряджаємо і магазин запасу не витрачаємо.
 	if state.Ammo >= magazineSize then
@@ -447,7 +447,7 @@ local function reloadWeapon(player)
 		currentCharacter:SetAttribute(magAttr, currentReserve - 1)
 		currentState.Ammo = magazineSize
 		currentState.Reloading = false
-		weapon:SetAttribute("Current_ammo", currentState.Ammo)
+		weapon:SetAttribute("Ammo_cur", currentState.Ammo)
 	end)
 end
 
@@ -489,7 +489,7 @@ local function fireWeapon(player)
 
 	state.LastShotTime = now
 	state.Ammo -= 1
-	weapon:SetAttribute("Current_ammo", state.Ammo)
+	weapon:SetAttribute("Ammo_cur", state.Ammo)
 
 	local direction = getBarrelDirection(weapon, barrel)
 	local origin = barrel.Position + direction * 0.25

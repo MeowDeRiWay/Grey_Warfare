@@ -46,8 +46,8 @@ function InfantryHUD.Update()
 
 	local weapon = equippedWeapon()
 	if weapon then
-		local current = Shared.getNumber(weapon, {"Current_ammo"}, 0)
-		local max = Shared.getNumber(weapon, {"Magazine_size"}, 0)
+		local current = Shared.getNumber(weapon, {"Ammo_cur"}, 0)
+		local max = Shared.getNumber(weapon, {"Ammo_max"}, 0)
 		ammo.Text = string.format("AMMO    %d / %d", math.floor(current + 0.5), math.floor(max + 0.5))
 		hints.Text = "LMB — Fire   |   R — Reload   |   X — Holster"
 	else

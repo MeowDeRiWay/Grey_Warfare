@@ -53,7 +53,7 @@ local function getAmmoValue(vehicle)
 
 	for _, module in ipairs(mounted:GetDescendants()) do
 		if module:IsA("Model") then
-			local magazines = tonumber(module:GetAttribute("Current_magazines"))
+			local magazines = tonumber(module:GetAttribute("Mag_cur"))
 			if magazines and magazines > 0 then
 				local price = tonumber(module:GetAttribute("Magazine_cargo_price"))
 					or tonumber(module:GetAttribute("Cargo_per_mag"))

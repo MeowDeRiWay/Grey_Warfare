@@ -7,6 +7,7 @@ local ResourceManager = {}
 -- HP_cur / HP_max / HP_reg
 -- Fuel_cur / Fuel_max / Fuel_reg
 -- Cargo_cur / Cargo_max / Cargo_reg
+-- Ammo_cur / Ammo_max / Ammo_reg
 --
 -- Old attributes are mirrored temporarily so the existing vehicle,
 -- warehouse, projectile and HUD code keeps working during migration.
@@ -32,6 +33,13 @@ local RESOURCES = {
 		reg = "Cargo_reg",
 		oldCur = {"Current_cargo", "Cargo_current", "Loaded_cargo", "Cargo", "CurrentCargo"},
 		oldMax = {"Max_cargo", "Cargo_max", "Cargo_capacity", "MaxCargo"},
+	},
+	Ammo = {
+		cur = "Ammo_cur",
+		max = "Ammo_max",
+		reg = "Ammo_reg",
+		oldCur = {"Current_ammo", "Rocket_current"},
+		oldMax = {"Magazine_size", "Max_ammo", "Rocket_max"},
 	},
 }
 

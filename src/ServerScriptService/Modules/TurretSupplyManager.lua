@@ -155,10 +155,10 @@ end
 
 local function tryBuyOneMagazine(turret, provider)
 	local currentMagazines =
-		tonumber(turret:GetAttribute("Current_magazines")) or 0
+		tonumber(turret:GetAttribute("Mag_cur")) or 0
 
 	local maxMagazines =
-		tonumber(turret:GetAttribute("Max_magazines")) or 0
+		tonumber(turret:GetAttribute("Mag_max")) or 0
 
 	if maxMagazines <= 0 or currentMagazines >= maxMagazines then
 		return false
@@ -180,7 +180,7 @@ local function tryBuyOneMagazine(turret, provider)
 	end
 
 	turret:SetAttribute(
-		"Current_magazines",
+		"Mag_cur",
 		math.min(maxMagazines, currentMagazines + 1)
 	)
 
@@ -263,10 +263,10 @@ local function processVehicle(vehicle, dt)
 			progressByTurret[turret] = progress
 		else
 			local currentMagazines =
-				tonumber(turret:GetAttribute("Current_magazines")) or 0
+				tonumber(turret:GetAttribute("Mag_cur")) or 0
 
 			local maxMagazines =
-				tonumber(turret:GetAttribute("Max_magazines")) or 0
+				tonumber(turret:GetAttribute("Mag_max")) or 0
 
 			if maxMagazines <= 0 or currentMagazines >= maxMagazines then
 				progressByTurret[turret] = 0
@@ -284,7 +284,7 @@ local function processVehicle(vehicle, dt)
 				progress -= supplyTime
 
 				currentMagazines =
-					tonumber(turret:GetAttribute("Current_magazines")) or 0
+					tonumber(turret:GetAttribute("Mag_cur")) or 0
 
 				if currentMagazines >= maxMagazines then
 					progress = 0

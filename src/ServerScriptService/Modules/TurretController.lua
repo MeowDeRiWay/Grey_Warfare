@@ -631,10 +631,10 @@ local function reloadTurret(data)
 	local turret = data.Turret
 
 	local magazineSize =
-		tonumber(turret:GetAttribute("Magazine_size")) or 0
+		tonumber(turret:GetAttribute("Ammo_max")) or 0
 
 	local currentMagazines =
-		tonumber(turret:GetAttribute("Current_magazines")) or 0
+		tonumber(turret:GetAttribute("Mag_cur")) or 0
 
 	if magazineSize <= 0 or currentMagazines <= 0 then
 		return false
@@ -642,7 +642,7 @@ local function reloadTurret(data)
 
 	-- Один запасний магазин витрачається в момент початку перезарядки.
 	turret:SetAttribute(
-		"Current_magazines",
+		"Mag_cur",
 		math.max(0, currentMagazines - 1)
 	)
 
@@ -656,7 +656,7 @@ local function reloadTurret(data)
 			return
 		end
 
-		turret:SetAttribute("Current_ammo", magazineSize)
+		turret:SetAttribute("Ammo_cur", magazineSize)
 		data.Reloading = false
 	end)
 
@@ -700,7 +700,7 @@ local function fireTurret(player, vehicle, turret)
 	end
 
 	local currentAmmo =
-		tonumber(turret:GetAttribute("Current_ammo")) or 0
+		tonumber(turret:GetAttribute("Ammo_cur")) or 0
 
 	if currentAmmo <= 0 then
 		reloadTurret(data)
@@ -710,7 +710,7 @@ local function fireTurret(player, vehicle, turret)
 	data.LastShotTime = now
 
 	currentAmmo -= 1
-	turret:SetAttribute("Current_ammo", currentAmmo)
+	turret:SetAttribute("Ammo_cur", currentAmmo)
 
 	local direction = getBarrelDirection(turret, barrel)
 

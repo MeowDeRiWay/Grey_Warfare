@@ -55,11 +55,11 @@ local function builtInGun(vehicle)
 	for _, item in ipairs(vehicle:GetDescendants()) do
 		if item:IsA("Model")
 			and item ~= vehicle
-			and item:GetAttribute("Current_ammo") ~= nil
+			and item:GetAttribute("Ammo_cur") ~= nil
 			and not (mounted and item:IsDescendantOf(mounted))
 		then
-			return Shared.getNumber(item, {"Current_ammo"}, 0),
-				Shared.getNumber(item, {"Magazine_size", "Max_ammo"}, 0)
+			return Shared.getNumber(item, {"Ammo_cur"}, 0),
+				Shared.getNumber(item, {"Ammo_max", "Ammo_max"}, 0)
 		end
 	end
 	return nil, nil
@@ -183,10 +183,10 @@ function PlaneHUD.Update(vehicle)
 			moduleLabels[i] = label
 		end
 		label.Visible = true
-		local ammo = Shared.getNumber(module, {"Current_ammo"}, nil)
-		local magSize = Shared.getNumber(module, {"Magazine_size", "Max_ammo"}, nil)
-		local mags = Shared.getNumber(module, {"Current_magazines"}, nil)
-		local maxMags = Shared.getNumber(module, {"Max_magazines"}, nil)
+		local ammo = Shared.getNumber(module, {"Ammo_cur"}, nil)
+		local magSize = Shared.getNumber(module, {"Ammo_max", "Ammo_max"}, nil)
+		local mags = Shared.getNumber(module, {"Mag_cur"}, nil)
+		local maxMags = Shared.getNumber(module, {"Mag_max"}, nil)
 
 		local parts = {Shared.moduleDisplayName(module)}
 		if ammo ~= nil then

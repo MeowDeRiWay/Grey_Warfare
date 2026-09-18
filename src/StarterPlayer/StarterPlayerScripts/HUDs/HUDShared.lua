@@ -149,8 +149,8 @@ function HUDShared.getAmmoModules(vehicle)
 	for _, item in ipairs(mounted:GetDescendants()) do
 		if item:IsA("Model")
 			and (
-				item:GetAttribute("Current_ammo") ~= nil
-				or item:GetAttribute("Current_magazines") ~= nil
+				item:GetAttribute("Ammo_cur") ~= nil
+				or item:GetAttribute("Mag_cur") ~= nil
 			)
 		then
 			table.insert(result, item)

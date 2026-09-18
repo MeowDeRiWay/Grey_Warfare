@@ -82,8 +82,8 @@ local function getMountedModules(vehicle)
 end
 
 local function isRocketLauncher(module)
-	if module:GetAttribute("Rocket_current") ~= nil
-		or module:GetAttribute("Rocket_max") ~= nil
+	if module:GetAttribute("Ammo_cur") ~= nil
+		or module:GetAttribute("Ammo_max") ~= nil
 	then
 		return true
 	end
@@ -154,8 +154,8 @@ local function countLoadedRockets(module)
 		end
 	end
 
-	local attrCurrent = tonumber(module:GetAttribute("Rocket_current"))
-	local attrMax = tonumber(module:GetAttribute("Rocket_max"))
+	local attrCurrent = tonumber(module:GetAttribute("Ammo_cur"))
+	local attrMax = tonumber(module:GetAttribute("Ammo_max"))
 
 	if attrCurrent ~= nil then
 		loaded = attrCurrent
@@ -174,10 +174,10 @@ local function getDisplayAmmoEntries(vehicle)
 	for _, module in ipairs(Shared.getAmmoModules(vehicle)) do
 		seen[module] = true
 
-		local ammo = Shared.getNumber(module, {"Current_ammo"}, 0)
-		local magSize = Shared.getNumber(module, {"Magazine_size"}, 0)
-		local mags = Shared.getNumber(module, {"Current_magazines"}, 0)
-		local maxMags = Shared.getNumber(module, {"Max_magazines"}, 0)
+		local ammo = Shared.getNumber(module, {"Ammo_cur"}, 0)
+		local magSize = Shared.getNumber(module, {"Ammo_max"}, 0)
+		local mags = Shared.getNumber(module, {"Mag_cur"}, 0)
+		local maxMags = Shared.getNumber(module, {"Mag_max"}, 0)
 
 		table.insert(entries, {
 			module = module,

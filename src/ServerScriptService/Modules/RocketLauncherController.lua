@@ -175,8 +175,8 @@ local function syncCounts(launcher)
 		end
 	end
 
-	launcher:SetAttribute("Rocket_current", loaded)
-	launcher:SetAttribute("Rocket_max", #sockets)
+	launcher:SetAttribute("Ammo_cur", loaded)
+	launcher:SetAttribute("Ammo_max", #sockets)
 	launcher:SetAttribute("Rocket_pending", pending)
 end
 
@@ -283,12 +283,12 @@ end
 
 function RocketLauncherController.GetLoadedCount(launcher)
 	syncCounts(launcher)
-	return tonumber(launcher:GetAttribute("Rocket_current")) or 0
+	return tonumber(launcher:GetAttribute("Ammo_cur")) or 0
 end
 
 function RocketLauncherController.GetMaxCount(launcher)
 	syncCounts(launcher)
-	return tonumber(launcher:GetAttribute("Rocket_max")) or 0
+	return tonumber(launcher:GetAttribute("Ammo_max")) or 0
 end
 
 function RocketLauncherController.GetNextEmptySocket(launcher)

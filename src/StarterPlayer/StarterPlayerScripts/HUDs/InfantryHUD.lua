@@ -40,8 +40,8 @@ function InfantryHUD.Update()
 		return
 	end
 
-	local currentHealth = Shared.getNumber(character, {"Current_health"}, humanoid.Health)
-	local maxHealth = Shared.getNumber(character, {"Max_health"}, humanoid.MaxHealth)
+	local currentHealth = Shared.getNumber(character, {"HP_cur"}, humanoid.Health)
+	local maxHealth = Shared.getNumber(character, {"HP_max"}, humanoid.MaxHealth)
 	hp.Text = string.format("HP      %d / %d", math.floor(currentHealth + 0.5), math.floor(maxHealth + 0.5))
 
 	local weapon = equippedWeapon()

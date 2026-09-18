@@ -77,9 +77,7 @@ local function findDamageTarget(instance)
 	local current = instance
 
 	while current and current ~= Workspace do
-		if current:GetAttribute("Current_health") ~= nil
-			or current:GetAttribute("Health") ~= nil
-		then
+		if current:GetAttribute("HP_cur") ~= nil then
 			return current
 		end
 
@@ -205,25 +203,17 @@ local function applyDamage(target, damage)
 		return
 	end
 
-	local currentHealth = target:GetAttribute("Current_health")
+	local currentHealth = target:GetAttribute("HP_cur")
 
 	if currentHealth ~= nil then
 		target:SetAttribute(
-			"Current_health",
+			"HP_cur",
 			math.max(0, tonumber(currentHealth) - damage)
 		)
 
 		return
 	end
 
-	local health = target:GetAttribute("Health")
-
-	if health ~= nil then
-		target:SetAttribute(
-			"Health",
-			math.max(0, tonumber(health) - damage)
-		)
-	end
 end
 
 local function getProjectileDrag(config, weapon)

@@ -153,12 +153,12 @@ local function ensureCharacterStats(character)
 		return
 	end
 
-	local maxHealth = tonumber(character:GetAttribute("Max_health")) or DEFAULT_REG_MAG_MAX * 10
-	if character:GetAttribute("Max_health") == nil then
-		character:SetAttribute("Max_health", maxHealth)
+	local maxHealth = tonumber(character:GetAttribute("HP_max")) or DEFAULT_REG_MAG_MAX * 10
+	if character:GetAttribute("HP_max") == nil then
+		character:SetAttribute("HP_max", maxHealth)
 	end
-	if character:GetAttribute("Current_health") == nil then
-		character:SetAttribute("Current_health", maxHealth)
+	if character:GetAttribute("HP_cur") == nil then
+		character:SetAttribute("HP_cur", maxHealth)
 	end
 
 	local regMax = tonumber(character:GetAttribute("Reg_mag_max")) or DEFAULT_REG_MAG_MAX

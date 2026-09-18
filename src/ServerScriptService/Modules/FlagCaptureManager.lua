@@ -154,7 +154,7 @@ end
 
 local function updateDestroyedState(flag)
 	local currentHealth =
-		math.max(0, tonumber(flag:GetAttribute("Current_health")) or 0)
+		math.max(0, tonumber(flag:GetAttribute("HP_cur")) or 0)
 
 	local destroyed = flag:GetAttribute("Destroyed") == true
 
@@ -253,9 +253,9 @@ local function processFlag(flag, dt)
 		resetCapture(flag)
 
 		local maxHealth =
-			math.max(0, tonumber(flag:GetAttribute("Max_health")) or 0)
+			math.max(0, tonumber(flag:GetAttribute("HP_max")) or 0)
 		if maxHealth > 0 then
-			flag:SetAttribute("Current_health", maxHealth)
+			flag:SetAttribute("HP_cur", maxHealth)
 		end
 
 		notifyTeamOutsideRadius(flag, capturingTeam, "Captured")

@@ -121,8 +121,8 @@ function PlaneHUD.Update(vehicle)
 
 	title.Text = tostring(vehicle:GetAttribute("DisplayName") or vehicle.Name)
 
-	local ch = Shared.getNumber(vehicle, {"Current_health", "Health"}, 0)
-	local mh = Shared.getNumber(vehicle, {"Max_health", "MaxHealth"}, ch)
+	local ch = Shared.getNumber(vehicle, {"HP_cur"}, 0)
+	local mh = Shared.getNumber(vehicle, {"HP_max"}, ch)
 	hp.Text = string.format("HP        %d / %d", ch, mh)
 
 	local cf, mf = Shared.getFuel(vehicle)

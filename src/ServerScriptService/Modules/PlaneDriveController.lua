@@ -248,10 +248,10 @@ RunService.Heartbeat:Connect(function(dt)
 			)
 
 		local currentFuel =
-			tonumber(vehicle:GetAttribute("Current_fuel")) or 0
+			tonumber(vehicle:GetAttribute("Fuel_cur")) or 0
 
 		local maxFuel =
-			tonumber(vehicle:GetAttribute("Max_fuel")) or 0
+			tonumber(vehicle:GetAttribute("Fuel_max")) or 0
 
 		local fuelPerSecond =
 			math.max(
@@ -360,7 +360,7 @@ RunService.Heartbeat:Connect(function(dt)
 					0,
 					currentFuel - fuelPerSecond * data.Throttle * dt
 				)
-			vehicle:SetAttribute("Current_fuel", currentFuel)
+			vehicle:SetAttribute("Fuel_cur", currentFuel)
 		end
 
 		vehicle:SetAttribute("Current_speed", data.CurrentSpeed)

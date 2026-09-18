@@ -10,7 +10,7 @@ local WarehouseManager = {}
 --   ObjectType = "Warehouse"        + add_cargo / get_cargo
 --   ObjectType = "FuelStation"      + add_fuel
 --   ObjectType = "SupplyStation"    + add_supply
---   ModuleRole = "Cargo"            + Current_cargo / Max_cargo
+--   ModuleRole = "Cargo"            + Cargo_cur / Cargo_max
 --   ModuleRole = "FuelStation"      + add_fuel
 --   ModuleRole = "SupplyStation"    + add_supply
 --
@@ -21,8 +21,8 @@ local WarehouseManager = {}
 local BASE_OBJECTS_FOLDER_NAME = "Base_objects"
 local ACTIVE_VEHICLES_FOLDER_NAME = "ActiveVehicles"
 
-local CARGO_TRANSFER_RATE = 0.05 -- 5% Max_cargo / sec
-local FUEL_TRANSFER_RATE = 0.10 -- 10% Max_fuel / sec
+local CARGO_TRANSFER_RATE = 0.05 -- 5% Cargo_max / sec
+local FUEL_TRANSFER_RATE = 0.10 -- 10% Fuel_max / sec
 local DEFAULT_SUPPLY_TIME = 5 -- seconds per magazine
 local DEFAULT_TOUCH_RADIUS = 8
 local DEFAULT_CARGO_RADIUS = 100
@@ -183,7 +183,7 @@ local function getCargoTarget(vehicle)
 	local cargoModules = getCargoModules(vehicle)
 
 	for _, cargoModule in ipairs(cargoModules) do
-		local current = tonumber(cargoModule:GetAttribute("Current_cargo")) or 0
+		local current = tonumber(cargoModule:GetAttribute("Cargo_cur")) or 0
 
 		if current > 0 then
 			return cargoModule
@@ -194,7 +194,7 @@ local function getCargoTarget(vehicle)
 		return cargoModules[1]
 	end
 
-	if vehicle and vehicle:GetAttribute("Max_cargo") ~= nil then
+	if vehicle and vehicle:GetAttribute("Cargo_max") ~= nil then
 		return vehicle
 	end
 
@@ -209,8 +209,8 @@ local function isVehicle(model)
 	return model:IsA("Model")
 		and model:GetAttribute("TeamOwner") ~= nil
 		and (
-			model:GetAttribute("Max_fuel") ~= nil
-			or model:GetAttribute("Max_cargo") ~= nil
+			model:GetAttribute("Fuel_max") ~= nil
+			or model:GetAttribute("Cargo_max") ~= nil
 			or getCargoModule(model) ~= nil
 		)
 end
@@ -330,7 +330,7 @@ local function findCargoSourceNear(sourceModel, teamOwner, radiusOverride)
 	for object in pairs(staticObjects) do
 		if object.Parent and object:GetAttribute("ObjectType") == "Warehouse" then
 			if getTeamOwner(object) == teamOwner then
-				local cargoCurrent = tonumber(object:GetAttribute("Current_cargo")) or 0
+				local cargoCurrent = tonumber(object:GetAttribute("Cargo_cur")) or 0
 				if cargoCurrent > 0 then
 					local main = getMain(object)
 					if main then
@@ -348,7 +348,7 @@ local function findCargoSourceNear(sourceModel, teamOwner, radiusOverride)
 	-- Мобільні cargo-модулі.
 	for _, cargoModule in ipairs(getMobileModulesByRole("Cargo")) do
 		if cargoModule.Parent and getTeamOwner(cargoModule) == teamOwner and cargoModule ~= sourceModel then
-			local cargoCurrent = tonumber(cargoModule:GetAttribute("Current_cargo")) or 0
+			local cargoCurrent = tonumber(cargoModule:GetAttribute("Cargo_cur")) or 0
 			if cargoCurrent > 0 then
 				local main = getMain(cargoModule)
 				if main then
@@ -373,7 +373,7 @@ local function getLocalCargoSourceForProvider(provider)
 
 	local cargoTarget = getCargoTarget(vehicle)
 	if cargoTarget then
-		local currentCargo = tonumber(cargoTarget:GetAttribute("Current_cargo")) or 0
+		local currentCargo = tonumber(cargoTarget:GetAttribute("Cargo_cur")) or 0
 		if currentCargo > 0 then
 			return cargoTarget
 		end
@@ -404,14 +404,14 @@ local function takeCargoFromSource(cargoSource, amount)
 		return 0
 	end
 
-	local currentCargo = tonumber(cargoSource:GetAttribute("Current_cargo")) or 0
+	local currentCargo = tonumber(cargoSource:GetAttribute("Cargo_cur")) or 0
 	local taken = math.min(currentCargo, amount)
 
 	if taken <= 0 then
 		return 0
 	end
 
-	cargoSource:SetAttribute("Current_cargo", currentCargo - taken)
+	cargoSource:SetAttribute("Cargo_cur", currentCargo - taken)
 	return taken
 end
 
@@ -430,7 +430,7 @@ function WarehouseManager.CanPayCargo(sourceModel, amount)
 		return false
 	end
 
-	local currentCargo = tonumber(cargoSource:GetAttribute("Current_cargo")) or 0
+	local currentCargo = tonumber(cargoSource:GetAttribute("Cargo_cur")) or 0
 	return currentCargo >= amount
 end
 
@@ -453,7 +453,7 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
+	local warehouseCurrent = tonumber(warehouse:GetAttribute("Cargo_cur")) or 0
 
 	if warehouseCurrent <= 0 then
 		return
@@ -464,7 +464,7 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 	-- Якщо модулів немає, підтримуємо старий варіант,
 	-- де Cargo зберігається прямо на машині.
 	if #cargoModules == 0 then
-		if vehicle:GetAttribute("Max_cargo") == nil then
+		if vehicle:GetAttribute("Cargo_max") == nil then
 			return
 		end
 
@@ -477,10 +477,10 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 		end
 
 		local vehicleCurrent =
-			tonumber(cargoTarget:GetAttribute("Current_cargo")) or 0
+			tonumber(cargoTarget:GetAttribute("Cargo_cur")) or 0
 
 		local vehicleMax =
-			tonumber(cargoTarget:GetAttribute("Max_cargo")) or 0
+			tonumber(cargoTarget:GetAttribute("Cargo_max")) or 0
 
 		if vehicleMax > 0 and vehicleCurrent < vehicleMax then
 
@@ -495,14 +495,14 @@ local function loadVehicleFromWarehouse(vehicle, warehouse, dt)
 
 			if transfer > 0 then
 				cargoTarget:SetAttribute(
-					"Current_cargo",
+					"Cargo_cur",
 					vehicleCurrent + transfer
 				)
 
 				warehouseCurrent -= transfer
 
 				warehouse:SetAttribute(
-					"Current_cargo",
+					"Cargo_cur",
 					warehouseCurrent
 				)
 
@@ -531,11 +531,11 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	local vehicleCurrent = tonumber(cargoTarget:GetAttribute("Current_cargo")) or 0
-	local vehicleMax = tonumber(cargoTarget:GetAttribute("Max_cargo")) or 0
+	local vehicleCurrent = tonumber(cargoTarget:GetAttribute("Cargo_cur")) or 0
+	local vehicleMax = tonumber(cargoTarget:GetAttribute("Cargo_max")) or 0
 
-	local warehouseCurrent = tonumber(warehouse:GetAttribute("Current_cargo")) or 0
-	local warehouseMax = tonumber(warehouse:GetAttribute("Max_cargo")) or 0
+	local warehouseCurrent = tonumber(warehouse:GetAttribute("Cargo_cur")) or 0
+	local warehouseMax = tonumber(warehouse:GetAttribute("Cargo_max")) or 0
 
 	if vehicleCurrent <= 0 or vehicleMax <= 0 or warehouseMax <= 0 or warehouseCurrent >= warehouseMax then
 		return
@@ -548,8 +548,8 @@ local function unloadVehicleToWarehouse(vehicle, warehouse, dt)
 		return
 	end
 
-	cargoTarget:SetAttribute("Current_cargo", vehicleCurrent - transfer)
-	warehouse:SetAttribute("Current_cargo", warehouseCurrent + transfer)
+	cargoTarget:SetAttribute("Cargo_cur", vehicleCurrent - transfer)
+	warehouse:SetAttribute("Cargo_cur", warehouseCurrent + transfer)
 
 	dprint("[WarehouseManager V6] UNLOAD cargo:", vehicle.Name, "<-", cargoTarget.Name, "-", transfer)
 end
@@ -564,8 +564,8 @@ local function refuelVehicleFromProvider(vehicle, provider, dt)
 		return
 	end
 
-	local currentFuel = tonumber(vehicle:GetAttribute("Current_fuel")) or 0
-	local maxFuel = tonumber(vehicle:GetAttribute("Max_fuel")) or 0
+	local currentFuel = tonumber(vehicle:GetAttribute("Fuel_cur")) or 0
+	local maxFuel = tonumber(vehicle:GetAttribute("Fuel_max")) or 0
 	if maxFuel <= 0 or currentFuel >= maxFuel then
 		return
 	end
@@ -592,7 +592,7 @@ local function refuelVehicleFromProvider(vehicle, provider, dt)
 		return
 	end
 
-	vehicle:SetAttribute("Current_fuel", currentFuel + fuelToAdd)
+	vehicle:SetAttribute("Fuel_cur", currentFuel + fuelToAdd)
 	dprint("[WarehouseManager V6] REFUEL:", vehicle.Name, "+", fuelToAdd, "Provider:", provider.Name, "Cargo:", cargoSource.Name)
 end
 
@@ -696,8 +696,8 @@ local function supplyPlayer(player, dt)
 
 		if not added then
 			-- Гравець повний. Повертаємо cargo назад.
-			local currentCargo = tonumber(cargoSource:GetAttribute("Current_cargo")) or 0
-			cargoSource:SetAttribute("Current_cargo", currentCargo + cargoTaken)
+			local currentCargo = tonumber(cargoSource:GetAttribute("Cargo_cur")) or 0
+			cargoSource:SetAttribute("Cargo_cur", currentCargo + cargoTaken)
 			progress = 0
 			break
 		end

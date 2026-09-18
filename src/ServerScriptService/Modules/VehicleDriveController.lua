@@ -62,7 +62,7 @@ local function getConfig(vehicle)
 		Collision_box_scale = tonumber(getAttr(vehicle, "Collision_box_scale", 0.96)) or 0.96,
 		Collision_sweep_step = tonumber(getAttr(vehicle, "Collision_sweep_step", 0.75)) or 0.75,
 
-		Max_fuel = tonumber(getAttr(vehicle, "Max_fuel", 100)) or 100,
+		Fuel_max = tonumber(getAttr(vehicle, "Fuel_max", 100)) or 100,
 		Fuel_per_stud = tonumber(getAttr(vehicle, "Fuel_per_stud", 0.01)) or 0.01,
 
 		Suspension_enabled = getAttr(vehicle, "Suspension_enabled", true),
@@ -291,11 +291,11 @@ local function applyVehicleToVehicleImpact(vehicle, data, otherVehicle)
 end
 
 local function consumeFuel(vehicle, data, cfg, dt)
-	local currentFuel = vehicle:GetAttribute("Current_fuel")
+	local currentFuel = vehicle:GetAttribute("Fuel_cur")
 
 	if currentFuel == nil then
-		currentFuel = cfg.Max_fuel
-		vehicle:SetAttribute("Current_fuel", currentFuel)
+		currentFuel = cfg.Fuel_max
+		vehicle:SetAttribute("Fuel_cur", currentFuel)
 	end
 
 	if currentFuel <= 0 then
@@ -307,7 +307,7 @@ local function consumeFuel(vehicle, data, cfg, dt)
 		local distance = math.abs(data.CurrentSpeed) * dt
 		local used = distance * cfg.Fuel_per_stud
 		local newFuel = math.max(0, currentFuel - used)
-		vehicle:SetAttribute("Current_fuel", newFuel)
+		vehicle:SetAttribute("Fuel_cur", newFuel)
 
 		if newFuel <= 0 then
 			data.CurrentSpeed = 0

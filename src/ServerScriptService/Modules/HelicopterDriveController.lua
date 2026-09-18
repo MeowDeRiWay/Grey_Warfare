@@ -414,8 +414,8 @@ RunService.Heartbeat:Connect(function(dt)
 		local owner = data.Owner
 		local occupantPlayer = getOccupantPlayer(seat)
 		local hasPilot = occupantPlayer ~= nil and occupantPlayer == owner
-		local currentFuel = tonumber(vehicle:GetAttribute("Current_fuel")) or 0
-		local maxFuel = tonumber(vehicle:GetAttribute("Max_fuel")) or 0
+		local currentFuel = tonumber(vehicle:GetAttribute("Fuel_cur")) or 0
+		local maxFuel = tonumber(vehicle:GetAttribute("Fuel_max")) or 0
 		local fuelPerSecond = getNumberAttr(vehicle, "Fuel_per_second", 1)
 		local hasFuel = maxFuel <= 0 or currentFuel > 0
 		local hasControl = hasPilot and hasFuel
@@ -580,7 +580,7 @@ RunService.Heartbeat:Connect(function(dt)
 		vehicle:SetAttribute("Is_grounded", groundedNow)
 
 		if hasControl and maxFuel > 0 and fuelPerSecond > 0 then
-			vehicle:SetAttribute("Current_fuel", math.max(0, currentFuel - fuelPerSecond * dt))
+			vehicle:SetAttribute("Fuel_cur", math.max(0, currentFuel - fuelPerSecond * dt))
 		end
 
 		local rotorTarget = 0

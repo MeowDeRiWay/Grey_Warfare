@@ -500,8 +500,8 @@ function GroundHUD.Update(vehicle)
 			or vehicle.Name
 		)
 
-	local currentHealth = Shared.getNumber(vehicle, {"Current_health", "Health"}, 0)
-	local maxHealth = Shared.getNumber(vehicle, {"Max_health", "MaxHealth"}, currentHealth)
+	local currentHealth = Shared.getNumber(vehicle, {"HP_cur"}, 0)
+	local maxHealth = Shared.getNumber(vehicle, {"HP_max"}, currentHealth)
 	hp.Text = string.format("HP      %d / %d", currentHealth, maxHealth)
 
 	local currentFuel, maxFuel = Shared.getFuel(vehicle)

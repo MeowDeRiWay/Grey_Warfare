@@ -309,14 +309,14 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	vehicle:SetAttribute("OwnerUserId", player.UserId)
 	vehicle:SetAttribute("OwnerName", player.Name)
 
-	local maxHealth = vehicle:GetAttribute("Max_health")
-	if maxHealth and vehicle:GetAttribute("Current_health") == 0 then
-		vehicle:SetAttribute("Current_health", maxHealth)
+	local maxHealth = vehicle:GetAttribute("HP_max")
+	if maxHealth and vehicle:GetAttribute("HP_cur") == 0 then
+		vehicle:SetAttribute("HP_cur", maxHealth)
 	end
 
-	local maxFuel = vehicle:GetAttribute("Max_fuel")
-	if maxFuel and vehicle:GetAttribute("Current_fuel") == 0 then
-		vehicle:SetAttribute("Current_fuel", maxFuel)
+	local maxFuel = vehicle:GetAttribute("Fuel_max")
+	if maxFuel and vehicle:GetAttribute("Fuel_cur") == 0 then
+		vehicle:SetAttribute("Fuel_cur", maxFuel)
 	end
 
 	prepareVehicle(vehicle)

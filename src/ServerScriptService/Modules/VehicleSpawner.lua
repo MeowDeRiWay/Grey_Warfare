@@ -229,13 +229,13 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	local vehicleConfig = VehicleConfigManager.GetVehicleConfig(player, vehicleName)
 	if next(vehicleConfig) ~= nil then VehicleModuleManager.AttachConfiguredModules(vehicle, vehicleConfig, teamOwner or 0) end
 	protectDriverSeat(vehicle)
-	if vehicle:GetAttribute("VehicleType") == "Helicopter" or isPlane(vehicle) then
-		registerController(vehicle, player)
-		seatOwner(player, vehicle)
-	else
-		seatOwner(player, vehicle)
-		registerController(vehicle, player)
-	end
+	-- Register the controller BEFORE seating the player.
+	-- Ground vehicles are unanchored in prepareVehicle(), while seatOwner()
+	-- waits 0.15 s. With the old order a large vehicle could physically fall
+	-- before VehicleDriveController anchored it, then suspension saved that
+	-- already-wrong position as its initial RideHeight.
+	registerController(vehicle, player)
+	seatOwner(player, vehicle)
 	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Folder:", folderName)
 	return vehicle
 end

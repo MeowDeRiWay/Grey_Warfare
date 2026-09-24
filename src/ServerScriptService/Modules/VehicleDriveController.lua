@@ -331,13 +331,46 @@ local function makeVehicleArcadeSafe(vehicle)
 	end
 end
 
--- IMPORTANT: move the whole vehicle by the delta from the CURRENT Main CFrame.
--- Do not cache Model pivot offset: models with imported parts / unusual pivots can
--- visually "explode" when pitch/roll are applied around a stale or remote pivot.
-local function pivotVehicleByMain(vehicle, main, targetMainCFrame)
-	local currentPivot = vehicle:GetPivot()
-	local delta = targetMainCFrame * main.CFrame:Inverse()
-	vehicle:PivotTo(delta * currentPivot)
+-- Move every BasePart from a cached Main-relative transform.
+-- This deliberately does NOT depend on Model pivot / PrimaryPart behaviour.
+-- Large vehicles and models with unusual pivots therefore remain rigid:
+-- Main, wheels, seats, body and mounted modules all receive the same transform.
+local function moveVehicleByMain(vehicle, data, targetMainCFrame)
+	local offsets = data.PartOffsets
+	if not offsets then
+		return
+	end
+
+	-- Pick up parts/modules that were added after registration.
+	for _, item in ipairs(vehicle:GetDescendants()) do
+		if item:IsA("BasePart") and offsets[item] == nil then
+			offsets[item] = data.Main.CFrame:ToObjectSpace(item.CFrame)
+			item.Anchored = true
+			item.CanCollide = false
+			item.CanTouch = true
+			item.Massless = true
+		end
+	end
+
+	-- Build the complete rigid pose first, then move ALL parts atomically.
+	-- This avoids relying on Model pivot/PrimaryPart and also avoids moving
+	-- Main on one Lua statement while the rest of a large vehicle is still
+	-- sitting at the previous pose.
+	local parts = {}
+	local cframes = {}
+
+	for part, relativeCFrame in pairs(offsets) do
+		if part.Parent then
+			table.insert(parts, part)
+			table.insert(cframes, targetMainCFrame * relativeCFrame)
+		else
+			offsets[part] = nil
+		end
+	end
+
+	if #parts > 0 then
+		workspace:BulkMoveTo(parts, cframes, Enum.BulkMoveMode.FireCFrameChanged)
+	end
 end
 
 local function buildVisualCFrame(position, yaw, pitch, roll)
@@ -728,6 +761,15 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	local rideHeight = tonumber(vehicle:GetAttribute("Suspension_body_height")) or calculateInitialRideHeight(vehicle, main, wheels)
 	local width, length = calculateWheelDimensions(wheels, main.CFrame, currentYaw, axisName)
 
+	-- Freeze the exact shape of the vehicle relative to Main.
+	-- We cache every part AFTER modules have already been attached by VehicleSpawner.
+	local partOffsets = {}
+	for _, item in ipairs(vehicle:GetDescendants()) do
+		if item:IsA("BasePart") then
+			partOffsets[item] = main.CFrame:ToObjectSpace(item.CFrame)
+		end
+	end
+
 	activeVehicles[vehicle] = {
 		Main = main,
 		Seat = seat,
@@ -746,6 +788,8 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RideHeight = rideHeight,
 		WheelTrackWidth = width,
 		WheelBaseLength = length,
+
+		PartOffsets = partOffsets,
 	}
 
 	vehicle:SetAttribute("Current_speed", 0)
@@ -832,9 +876,10 @@ RunService.Heartbeat:Connect(function(dt)
 		local proposedPosition = data.Position + forward * data.CurrentSpeed * dt
 		local blocker = nil
 		local otherVehicle = nil
+		local hitPart = nil
 
 		if impactSpeed > 0.01 then
-			blocker, _, otherVehicle = sweepMainForBlockingObject(
+			blocker, hitPart, otherVehicle = sweepMainForBlockingObject(
 				vehicle,
 				main,
 				data.Position,
@@ -871,8 +916,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local mainCFrame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, pitch, roll)
 
-		-- Same stable Main-relative movement used by the old arcade anchored fix.
-		pivotVehicleByMain(vehicle, main, mainCFrame)
+		-- Move the complete rigid vehicle from Main-relative cached transforms.
+		moveVehicleByMain(vehicle, data, mainCFrame)
 
 		vehicle:SetAttribute("Current_speed", math.abs(data.CurrentSpeed))
 	end

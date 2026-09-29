@@ -50,8 +50,8 @@ local MIN_PITCH = math.rad(-85)
 local MAX_PITCH = math.rad(85)
 local VEHICLE_MAX_YAW = math.rad(150)
 
--- Custom Soldier rig has no Head.
--- Infantry eye position uses Helmet when available.
+-- Custom Soldier rig has no Head; Eyes is the camera anchor.
+-- Infantry eye position uses the Eyes model/part when available.
 local INFANTRY_EYE_LOCAL_OFFSET = Vector3.new(0, 0, 0)
 
 -- Ground vehicle first-person position relative to Driver_seat.
@@ -84,6 +84,10 @@ local planeFreeLook = false
 local planeLookYaw = 0
 local planeLookPitch = 0
 
+-- Q toggles mouse cursor release globally.
+-- While released, mouse movement does not rotate the camera.
+local cursorReleased = false
+
 local function setPublishedSight(mode, zoom)
 	sightMode = mode or "None"
 	player:SetAttribute("CameraSightMode", sightMode)
@@ -102,6 +106,31 @@ end
 local function getRoot()
 	local character = getCharacter()
 	return character and character:FindFirstChild("HumanoidRootPart") or nil
+end
+
+local function getEyesPart()
+	local character = getCharacter()
+	if not character then
+		return nil
+	end
+
+	local eyes = character:FindFirstChild("Eyes")
+	if not eyes then
+		return nil
+	end
+
+	if eyes:IsA("BasePart") then
+		return eyes
+	end
+
+	if eyes:IsA("Model") then
+		if eyes.PrimaryPart and eyes.PrimaryPart:IsA("BasePart") then
+			return eyes.PrimaryPart
+		end
+		return eyes:FindFirstChildWhichIsA("BasePart", true)
+	end
+
+	return nil
 end
 
 local function getSeat()
@@ -406,10 +435,15 @@ local function updateInfantryCamera(mouseDelta)
 		CFrame.new(rootPosition)
 		* CFrame.Angles(0, yaw, 0)
 
+	local eyesPart = getEyesPart()
 	local helmet = character:FindFirstChild("Helmet")
 	local eyePosition
 
-	if helmet and helmet:IsA("BasePart") then
+	-- Eyes is the authoritative first-person camera anchor.
+	if eyesPart then
+		eyePosition = eyesPart.Position
+	elseif helmet and helmet:IsA("BasePart") then
+		-- Temporary fallback for characters that do not have Eyes yet.
 		eyePosition =
 			helmet.CFrame:PointToWorldSpace(
 				INFANTRY_EYE_LOCAL_OFFSET
@@ -538,6 +572,21 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 
 	if input.KeyCode == Enum.KeyCode.Q then
+		cursorReleased = not cursorReleased
+		player:SetAttribute("CameraCursorReleased", cursorReleased)
+
+		if cursorReleased then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			UserInputService.MouseIconEnabled = true
+		else
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+			UserInputService.MouseIconEnabled = false
+		end
+		return
+	end
+
+	-- Plane free-look moved from Q to L.
+	if input.KeyCode == Enum.KeyCode.L then
 		local context = getContext()
 		if context == "Plane" then
 			planeFreeLook = not planeFreeLook
@@ -559,8 +608,14 @@ RunService:BindToRenderStep(
 		syncContext(context, seat)
 
 		-- Single global first-person input policy.
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-		UserInputService.MouseIconEnabled = false
+		-- Q can release the cursor without giving camera ownership to another script.
+		if cursorReleased then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			UserInputService.MouseIconEnabled = true
+		else
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+			UserInputService.MouseIconEnabled = false
+		end
 
 		camera.CameraType = Enum.CameraType.Scriptable
 		camera.FieldOfView = DEFAULT_FOV
@@ -571,7 +626,7 @@ RunService:BindToRenderStep(
 			return
 		end
 
-		local mouseDelta = UserInputService:GetMouseDelta()
+		local mouseDelta = cursorReleased and Vector2.zero or UserInputService:GetMouseDelta()
 
 		if context == "Vehicle" then
 			updateVehicleCamera(seat, vehicle, mouseDelta)
@@ -594,8 +649,11 @@ player.CharacterAdded:Connect(function()
 	planeLookYaw = 0
 	planeLookPitch = 0
 	planeFreeLook = false
+	cursorReleased = false
 	player:SetAttribute("PlaneFreeLook", false)
+	player:SetAttribute("CameraCursorReleased", false)
 end)
 
 setPublishedSight("None", 1)
 player:SetAttribute("PlaneFreeLook", false)
+player:SetAttribute("CameraCursorReleased", false)

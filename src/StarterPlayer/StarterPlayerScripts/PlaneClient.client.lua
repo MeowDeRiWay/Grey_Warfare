@@ -5,15 +5,14 @@ local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
 
 local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
-local mouse = player:GetMouse()
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local planeControlRemote = remotes:WaitForChild("PlaneControl")
 
 local SEND_RATE = 0.05
+-- Camera is owned exclusively by CameraController.client.lua.
+-- This file controls aircraft movement only.
 print("[PlaneClient] V11 MODULE-SAFE GROUND FIX loaded")
-local CAMERA_PRIORITY = Enum.RenderPriority.Camera.Value + 100
 
 local activePlane = nil
 local freeLook = false
@@ -33,12 +32,6 @@ local flightYaw = 0
 local flightPitch = 0
 local visualRoll = 0
 local fallSpeed = 0
-
-local savedCameraType = nil
-local savedCameraSubject = nil
-local savedFov = nil
-local savedMouseBehavior = nil
-local savedMouseIconEnabled = nil
 
 local function getMain(vehicle)
 	local main = vehicle and vehicle:FindFirstChild("Main", true)
@@ -191,15 +184,6 @@ local function enterPlane(vehicle)
 		visualRoll = 0
 	end
 
-	savedCameraType = camera.CameraType
-	savedCameraSubject = camera.CameraSubject
-	savedFov = camera.FieldOfView
-	savedMouseBehavior = UserInputService.MouseBehavior
-	savedMouseIconEnabled = UserInputService.MouseIconEnabled
-
-	camera.CameraType = Enum.CameraType.Scriptable
-	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-	UserInputService.MouseIconEnabled = true
 
 	bindPlaneControls()
 end
@@ -220,71 +204,7 @@ local function exitPlane()
 	fallSpeed = 0
 	unbindPlaneControls()
 
-	camera.CameraType = savedCameraType or Enum.CameraType.Custom
-	if savedCameraSubject then
-		camera.CameraSubject = savedCameraSubject
-	end
-	if savedFov then
-		camera.FieldOfView = savedFov
-	end
-
-	UserInputService.MouseBehavior = savedMouseBehavior or Enum.MouseBehavior.Default
-	if savedMouseIconEnabled ~= nil then
-		UserInputService.MouseIconEnabled = savedMouseIconEnabled
-	else
-		UserInputService.MouseIconEnabled = true
-	end
-
-	savedCameraType = nil
-	savedCameraSubject = nil
-	savedFov = nil
-	savedMouseBehavior = nil
-	savedMouseIconEnabled = nil
 end
-
-local function updateFreeLookFromCurrentCamera(focus)
-	local offset = camera.CFrame.Position - focus
-	local flat = Vector3.new(offset.X, 0, offset.Z)
-
-	if flat.Magnitude > 0.001 then
-		freeYaw = math.atan2(offset.X, offset.Z)
-	end
-
-	if offset.Magnitude > 0.001 then
-		freePitch = math.asin(math.clamp(offset.Y / offset.Magnitude, -1, 1))
-	end
-end
-
-local function toggleFreeLook()
-	if not activePlane then
-		return
-	end
-
-	freeLook = not freeLook
-	local main = getMain(activePlane)
-	if not main then
-		return
-	end
-
-	if freeLook then
-		updateFreeLookFromCurrentCamera(main.Position)
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-		UserInputService.MouseIconEnabled = false
-	else
-		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		UserInputService.MouseIconEnabled = true
-	end
-end
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed or not activePlane then
-		return
-	end
-
-	if input.KeyCode == Enum.KeyCode.Q then
-		toggleFreeLook()
-	end
-end)
 
 local function updateThrottle(dt, vehicle)
 	local rate =
@@ -303,149 +223,7 @@ local function updateThrottle(dt, vehicle)
 
 	throttle = math.clamp(throttle, 0, 1)
 end
-local function updateFlightCamera(vehicle, main, dt)
-	local forward = planeForward(vehicle)
-	local up = main.CFrame.UpVector
-	local cameraDistance = tonumber(vehicle:GetAttribute("Camera_distance")) or 24
-	local cameraHeight = tonumber(vehicle:GetAttribute("Camera_height")) or 7
-	local lookAhead = tonumber(vehicle:GetAttribute("Camera_look_ahead")) or 18
-
-	local focus = main.Position + forward * lookAhead
-	local desiredPosition = main.Position - forward * cameraDistance + up * cameraHeight
-	local desired = CFrame.lookAt(desiredPosition, focus, up)
-
-	local smooth = math.max(1, tonumber(vehicle:GetAttribute("Camera_smooth")) or 10)
-	local alpha = 1 - math.exp(-smooth * dt)
-
-	camera.CameraType = Enum.CameraType.Scriptable
-	camera.CFrame = camera.CFrame:Lerp(desired, alpha)
-	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-	UserInputService.MouseIconEnabled = true
-
-	-- Mouse-flight:
-	-- центр екрана = прямо по поточному курсу літака.
-	-- Курсор задає кутове відхилення, а не сирий Camera Ray.
-	local viewport = camera.ViewportSize
-	if viewport.X > 1 and viewport.Y > 1 then
-		local nx =
-			math.clamp(
-				(mouse.X - viewport.X * 0.5) / (viewport.X * 0.5),
-				-1,
-				1
-			)
-
-		local ny =
-			math.clamp(
-				(mouse.Y - viewport.Y * 0.5) / (viewport.Y * 0.5),
-				-1,
-				1
-			)
-
-		local maxYaw =
-			math.rad(
-				tonumber(vehicle:GetAttribute("Mouse_yaw_angle"))
-				or 35
-			)
-
-		local maxPitch =
-			math.rad(
-				tonumber(vehicle:GetAttribute("Mouse_pitch_angle"))
-				or 28
-			)
-
-		local currentForward = planeForward(vehicle)
-		local flatForward =
-			Vector3.new(
-				currentForward.X,
-				0,
-				currentForward.Z
-			)
-
-		if flatForward.Magnitude < 0.001 then
-			flatForward = Vector3.xAxis
-		else
-			flatForward = flatForward.Unit
-		end
-
-		local currentYaw =
-			math.atan2(
-				flatForward.Z,
-				flatForward.X
-			)
-
-		local currentPitch =
-			math.asin(
-				math.clamp(
-					currentForward.Y,
-					-1,
-					1
-				)
-			)
-
-		local targetYaw =
-			currentYaw + nx * maxYaw
-
-		-- Екранний Y росте вниз, тому верх екрана = позитивний pitch.
-		local targetPitch =
-			math.clamp(
-				currentPitch - ny * maxPitch,
-				math.rad(-80),
-				math.rad(80)
-			)
-
-		local cp = math.cos(targetPitch)
-
-		lastAimDirection =
-			Vector3.new(
-				cp * math.cos(targetYaw),
-				math.sin(targetPitch),
-				cp * math.sin(targetYaw)
-			).Unit
-	end
-end
-
-local function updateFreeLookCamera(vehicle, main)
-	local delta = UserInputService:GetMouseDelta()
-	local sensitivity = tonumber(vehicle:GetAttribute("Camera_sensitivity")) or 0.0035
-
-	freeYaw -= delta.X * sensitivity
-	freePitch -= delta.Y * sensitivity
-	freePitch = math.clamp(freePitch, math.rad(-80), math.rad(80))
-
-	local cameraDistance = tonumber(vehicle:GetAttribute("Camera_distance")) or 24
-	local cameraHeight = tonumber(vehicle:GetAttribute("Camera_height")) or 4
-	local focus = main.Position + Vector3.new(0, cameraHeight, 0)
-
-	local rotation = CFrame.fromEulerAnglesYXZ(freePitch, freeYaw, 0)
-	local offset = rotation:VectorToWorldSpace(Vector3.new(0, 0, cameraDistance))
-	local desiredPosition = focus + offset
-
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	local exclude = { vehicle }
-	if player.Character then
-		table.insert(exclude, player.Character)
-	end
-	rayParams.FilterDescendantsInstances = exclude
-	rayParams.IgnoreWater = true
-
-	local result = workspace:Raycast(focus, desiredPosition - focus, rayParams)
-	local finalPosition = desiredPosition
-
-	if result then
-		local direction = desiredPosition - focus
-		if direction.Magnitude > 0.001 then
-			finalPosition = result.Position - direction.Unit * 0.35
-		end
-	end
-
-	camera.CameraType = Enum.CameraType.Scriptable
-	camera.CFrame = CFrame.lookAt(finalPosition, focus)
-	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	UserInputService.MouseIconEnabled = false
-end
-
-RunService:BindToRenderStep("PlaneClientCamera", CAMERA_PRIORITY, function(dt)
+RunService:BindToRenderStep("PlaneClientControl", Enum.RenderPriority.Input.Value + 10, function(dt)
 	local controlledPlane = getControlledPlane()
 
 	if controlledPlane ~= activePlane then
@@ -509,22 +287,15 @@ RunService:BindToRenderStep("PlaneClientCamera", CAMERA_PRIORITY, function(dt)
 	local flightControlsUnlocked =
 		currentSpeed >= minSpeedForControls
 
-	if not freeLook then
-		local viewport = camera.ViewportSize
-		local nx, ny = 0, 0
+	freeLook = player:GetAttribute("PlaneFreeLook") == true
 
-		if viewport.X > 1 and viewport.Y > 1 then
-			nx = math.clamp(
-				(mouse.X - viewport.X * 0.5) / (viewport.X * 0.5),
-				-1,
-				1
-			)
-			ny = math.clamp(
-				(mouse.Y - viewport.Y * 0.5) / (viewport.Y * 0.5),
-				-1,
-				1
-			)
-		end
+	if not freeLook then
+		-- CameraController owns the mouse lock and camera.
+		-- Plane control only consumes the same per-frame mouse delta.
+		local mouseDelta = UserInputService:GetMouseDelta()
+		local inputScale = tonumber(vehicle:GetAttribute("Mouse_flight_sensitivity")) or 0.012
+		local nx = math.clamp(mouseDelta.X * inputScale, -1, 1)
+		local ny = math.clamp(mouseDelta.Y * inputScale, -1, 1)
 
 		local yawInput = math.sign(nx) * (math.abs(nx) ^ 2)
 		local pitchInput = 0
@@ -719,12 +490,6 @@ RunService:BindToRenderStep("PlaneClientCamera", CAMERA_PRIORITY, function(dt)
 	visualPlanePosition = desiredPosition
 
 	vehicle:PivotTo(CFrame.new(visualPlanePosition) * finalRotation)
-
-	if freeLook then
-		updateFreeLookCamera(vehicle, main)
-	else
-		updateFlightCamera(vehicle, main, dt)
-	end
 
 	sendAccumulator += dt
 	if sendAccumulator >= SEND_RATE then

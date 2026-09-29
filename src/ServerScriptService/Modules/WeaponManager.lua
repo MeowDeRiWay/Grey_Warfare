@@ -103,7 +103,7 @@ local function getBarrel(model)
 end
 
 local function axisToLocalVector(axis)
-	axis = tostring(axis or "X")
+	axis = tostring(axis or "-Z")
 
 	if axis == "X" then return Vector3.xAxis end
 	if axis == "-X" then return -Vector3.xAxis end
@@ -112,11 +112,11 @@ local function axisToLocalVector(axis)
 	if axis == "Z" then return Vector3.zAxis end
 	if axis == "-Z" then return -Vector3.zAxis end
 
-	return Vector3.xAxis
+	return -Vector3.zAxis
 end
 
 local function getBarrelDirection(weapon, barrel)
-	local axis = barrel:GetAttribute("Barrel_axis") or weapon:GetAttribute("Barrel_axis") or "X"
+	local axis = barrel:GetAttribute("Barrel_axis") or weapon:GetAttribute("Barrel_axis") or "-Z"
 	return barrel.CFrame:VectorToWorldSpace(axisToLocalVector(axis)).Unit
 end
 
@@ -200,7 +200,7 @@ local function buildHoldCFrame(weapon, aimPitch)
 	local offsetZ = getNumberAttr(weapon, "Hold_offset_z", -1.15)
 
 	local holdPitch = math.rad(getNumberAttr(weapon, "Hold_pitch", 0))
-	local holdYaw = math.rad(getNumberAttr(weapon, "Hold_yaw", -90))
+	local holdYaw = math.rad(getNumberAttr(weapon, "Hold_yaw", 0))
 	local holdRoll = math.rad(getNumberAttr(weapon, "Hold_roll", 0))
 
 	local aimScale = getNumberAttr(weapon, "Aim_pitch_scale", 1)
@@ -216,7 +216,7 @@ local function buildHoldCFrame(weapon, aimPitch)
 		* CFrame.Angles(holdPitch, 0, 0)
 		* CFrame.Angles(0, 0, holdRoll)
 
-	local aimAxis = tostring(weapon:GetAttribute("Aim_pitch_axis") or "Z")
+	local aimAxis = tostring(weapon:GetAttribute("Aim_pitch_axis") or "X")
 
 	if aimAxis == "X" then
 		return holdCFrame * CFrame.Angles(finalAimPitch, 0, 0)
@@ -226,11 +226,14 @@ local function buildHoldCFrame(weapon, aimPitch)
 		return holdCFrame * CFrame.Angles(0, finalAimPitch, 0)
 	elseif aimAxis == "-Y" then
 		return holdCFrame * CFrame.Angles(0, -finalAimPitch, 0)
+	elseif aimAxis == "Z" then
+		return holdCFrame * CFrame.Angles(0, 0, finalAimPitch)
 	elseif aimAxis == "-Z" then
 		return holdCFrame * CFrame.Angles(0, 0, -finalAimPitch)
 	end
 
-	return holdCFrame * CFrame.Angles(0, 0, finalAimPitch)
+	-- Standard weapon convention: -Z is forward, therefore pitch is around X.
+	return holdCFrame * CFrame.Angles(finalAimPitch, 0, 0)
 end
 
 local function applyWeaponAim(state)

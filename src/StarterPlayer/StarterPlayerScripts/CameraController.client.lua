@@ -480,36 +480,49 @@ local function updateVehicleCamera(seat, vehicle, mouseDelta)
 		MAX_PITCH
 	)
 
-	local right =
-		getNumberAttr(seat, vehicle, "FirstPerson_right", VEHICLE_RIGHT)
-	local height =
-		getNumberAttr(seat, vehicle, "FirstPerson_height", VEHICLE_HEIGHT)
-	local forward =
-		getNumberAttr(seat, vehicle, "FirstPerson_forward", VEHICLE_FORWARD)
+	-- IMPORTANT:
+	-- Sitting must never move the camera origin to Driver_seat/Main/model pivot.
+	-- The seated Soldier is carried by the seat, so Eyes remains the authoritative
+	-- first-person camera position exactly as it is while on foot.
+	local eyesPart = getEyesPart()
+	local eyePosition = eyesPart and eyesPart.Position
 
-	local eye =
-		seat.CFrame
-		* CFrame.new(right, height, forward)
+	if not eyePosition then
+		-- Fallback only for an incomplete character. This is intentionally based on
+		-- the character, not on the vehicle, so the camera can never jump to a vehicle pivot.
+		local root = getRoot()
+		if root then
+			eyePosition = root.Position + Vector3.new(0, 0.65, 0)
+		else
+			return
+		end
+	end
 
+	-- Keep vehicle look relative to the seat orientation, but position it at Eyes.
+	-- This preserves the existing vehicle orientation/costumes while fixing camera origin.
+	local seatRotation = seat.CFrame.Rotation
 	camera.CFrame =
-		eye
+		CFrame.new(eyePosition)
+		* seatRotation
 		* CFrame.Angles(0, vehicleYaw, 0)
 		* CFrame.Angles(vehiclePitch, 0, 0)
 end
 
 local function getPlaneEye(seat, vehicle)
-	if seat and seat:IsA("BasePart") then
-		local right =
-			getNumberAttr(seat, vehicle, "FirstPerson_right", PLANE_RIGHT)
-		local height =
-			getNumberAttr(seat, vehicle, "FirstPerson_height", PLANE_HEIGHT)
-		local forward =
-			getNumberAttr(seat, vehicle, "FirstPerson_forward", PLANE_FORWARD)
+	-- Same first-person rule as every other context: camera origin is Soldier Eyes.
+	local eyesPart = getEyesPart()
+	if eyesPart then
+		return eyesPart.Position
+	end
 
-		return (
-			seat.CFrame
-			* CFrame.new(right, height, forward)
-		).Position
+	local root = getRoot()
+	if root then
+		return root.Position + Vector3.new(0, 0.65, 0)
+	end
+
+	-- Last-resort fallback for a broken/missing character only.
+	if seat and seat:IsA("BasePart") then
+		return seat.Position
 	end
 
 	local main = vehicle and vehicle:FindFirstChild("Main", true)

@@ -15,6 +15,7 @@ local DEFAULT_MAX_TILT_DEGREES = 18
 local DEFAULT_GROUND_PROBE_RADIUS = 0.35
 local DEFAULT_SUSPENSION_UP_LERP = 28
 local DEFAULT_GROUND_CLEARANCE = 0.18
+local DEFAULT_OBSTACLE_BOUNCE_FACTOR = 0.25
 
 local function getAttr(vehicle, name, default)
 	local value = vehicle:GetAttribute(name)
@@ -121,16 +122,6 @@ end
 -- Forward declaration: collision sweep uses this before its implementation below.
 local buildMainCFrame
 
-local function findBlockingObject(hitPart)
-	-- IMPORTANT: only the exact Part/MeshPart carrying BlocksVehicle=true blocks.
-	-- We intentionally do NOT inherit the attribute from parent Models, because
-	-- warehouses contain trigger/zone parts that must remain passable.
-	if hitPart and hitPart:IsA("BasePart") and hitPart:GetAttribute("BlocksVehicle") == true then
-		return hitPart
-	end
-	return nil
-end
-
 local function getActiveGroundVehicleFromPart(part, selfVehicle)
 	if not part or not part:IsA("BasePart") then
 		return nil
@@ -175,14 +166,9 @@ local function getBlockingObjectAtMainCFrame(vehicle, main, targetMainCFrame, cf
 
 	local parts = Workspace:GetPartBoundsInBox(targetMainCFrame, boxSize, params)
 	for _, part in ipairs(parts) do
-		-- Buildings: only the exact tagged Part/MeshPart blocks.
-		local blocker = findBlockingObject(part)
-		if blocker then
-			return blocker, part, nil
-		end
-
-		-- Ground vehicles block one another even without BlocksVehicle.
-		-- We deliberately use only the other vehicle's Main as its collision body.
+		-- Main-vs-Main vehicle collision is kept. World geometry is no longer
+		-- controlled by BlocksVehicle; wheel probes decide whether terrain/parts
+		-- are climbable.
 		local otherVehicle = getActiveGroundVehicleFromPart(part, vehicle)
 		if otherVehicle then
 			return otherVehicle, part, otherVehicle
@@ -466,6 +452,91 @@ local function collectWheels(vehicle, main)
 	return wheels
 end
 
+-- Wheel obstacle rule:
+-- * every wheel checks the exact BasePart immediately in its travel direction;
+-- * the probe runs through the wheel centre;
+-- * if a BasePart reaches that centre height, it is too tall -> stop + damage;
+-- * if it stays below the centre, this horizontal probe misses it and the existing
+--   suspension/ground rays are free to lift the vehicle onto it.
+-- No folder/model/tag/BlocksVehicle lookup is involved. A BasePart can live anywhere.
+local function raycastVisibleObstacle(origin, direction, distance, vehicle)
+	-- Fully transparent helper/trigger parts must not stop a vehicle.
+	-- Recast after each transparent hit so a real wall behind an invisible zone
+	-- is still detected.
+	local ignored = { vehicle }
+	local remaining = distance
+	local currentOrigin = origin
+
+	for _ = 1, 32 do
+		if remaining <= 0.001 then
+			return nil
+		end
+
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = ignored
+		params.IgnoreWater = true
+
+		local result = Workspace:Raycast(currentOrigin, direction * remaining, params)
+		if not result then
+			return nil
+		end
+
+		local hit = result.Instance
+		if hit and hit:IsA("BasePart") and hit.Transparency >= 1 then
+			table.insert(ignored, hit)
+
+			local travelled = (result.Position - currentOrigin).Magnitude
+			remaining -= travelled + 0.01
+			currentOrigin = result.Position + direction * 0.01
+		else
+			return result
+		end
+	end
+
+	return nil
+end
+
+local function getTallWheelObstacle(vehicle, data, cfg, movementDirection, travelDistance)
+	if #data.Wheels == 0 or movementDirection.Magnitude < 0.001 then
+		return nil
+	end
+
+	local baseMainCFrame = buildMainCFrame(
+		data.Position,
+		data.Yaw,
+		data.DriveForwardAxis,
+		data.Pitch,
+		data.Roll
+	)
+
+	local direction = movementDirection.Unit
+	local configuredDistance = math.max(0.1, tonumber(cfg.Obstacle_check_distance) or 4)
+
+	for _, wheel in ipairs(data.Wheels) do
+		local wheelCenter = baseMainCFrame:PointToWorldSpace(wheel.LocalPosition)
+		local radius = math.max(0.1, tonumber(wheel.ProbeRadius) or 0.35)
+
+		-- Only look far enough to cover this frame plus the wheel's front edge.
+		-- Obstacle_check_distance remains an upper safety cap, not a premature stop range.
+		local probeDistance = math.min(
+			configuredDistance,
+			math.max(0.2, travelDistance + radius + 0.15)
+		)
+
+		-- Probe at wheel-centre height. Anything below this line remains climbable
+		-- by the suspension. A visible BasePart crossing this line is a hard impact.
+		local origin = wheelCenter
+		local result = raycastVisibleObstacle(origin, direction, probeDistance, vehicle)
+
+		if result and result.Instance and result.Instance:IsA("BasePart") then
+			return result.Instance, wheel
+		end
+	end
+
+	return nil, nil
+end
+
 local function average(values)
 	if #values == 0 then
 		return nil
@@ -746,6 +817,10 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RideHeight = rideHeight,
 		WheelTrackWidth = width,
 		WheelBaseLength = length,
+
+		-- Persistent hard-obstacle contact state.
+		LastWheelObstacle = nil,
+		BlockedThrottleDirection = 0,
 	}
 
 	vehicle:SetAttribute("Current_speed", 0)
@@ -797,8 +872,44 @@ RunService.Heartbeat:Connect(function(dt)
 			steer = -steer
 		end
 
-		local targetSpeed = 0
+		-- Persistent hard-wall lock. A rebound can create a tiny gap for one frame;
+		-- without a latch, held throttle/steering can repeatedly re-enter that gap
+		-- and slowly rotate/climb around a vertical obstacle.
+		local blockedByWall = false
+		local requestedDirection = 0
 		if throttle > 0 then
+			requestedDirection = 1
+		elseif throttle < 0 then
+			requestedDirection = -1
+		end
+
+		if requestedDirection ~= 0 and data.BlockedThrottleDirection == requestedDirection then
+			local probeDirection = forwardFromYaw(data.Yaw) * requestedDirection
+			local stillBlocked = getTallWheelObstacle(vehicle, data, cfg, probeDirection, 0)
+
+			if stillBlocked then
+				blockedByWall = true
+				steer = 0
+
+				-- Preserve an existing rebound while it moves away, but never allow
+				-- held throttle to cross zero and drive back into the wall.
+				if data.CurrentSpeed * requestedDirection >= 0 then
+					data.CurrentSpeed = 0
+				end
+			else
+				data.LastWheelObstacle = nil
+				data.BlockedThrottleDirection = 0
+			end
+		elseif requestedDirection == 0 or requestedDirection == -data.BlockedThrottleDirection then
+			-- Releasing throttle or deliberately reversing unlocks the contact.
+			data.LastWheelObstacle = nil
+			data.BlockedThrottleDirection = 0
+		end
+
+		local targetSpeed = 0
+		if blockedByWall then
+			targetSpeed = 0
+		elseif throttle > 0 then
 			targetSpeed = cfg.Speed
 		elseif throttle < 0 then
 			targetSpeed = -cfg.Speed_reverse
@@ -829,12 +940,13 @@ RunService.Heartbeat:Connect(function(dt)
 		forward = forwardFromYaw(data.Yaw)
 
 		local impactSpeed = math.abs(data.CurrentSpeed)
-		local proposedPosition = data.Position + forward * data.CurrentSpeed * dt
-		local blocker = nil
+		local movement = forward * data.CurrentSpeed * dt
+		local proposedPosition = data.Position + movement
 		local otherVehicle = nil
 
+		-- Keep the existing Main-vs-Main collision only for other active vehicles.
 		if impactSpeed > 0.01 then
-			blocker, _, otherVehicle = sweepMainForBlockingObject(
+			local _, _, detectedVehicle = sweepMainForBlockingObject(
 				vehicle,
 				main,
 				data.Position,
@@ -845,29 +957,70 @@ RunService.Heartbeat:Connect(function(dt)
 				data.Roll,
 				cfg
 			)
+			otherVehicle = detectedVehicle
 		end
 
-		if blocker then
-			if otherVehicle then
-				-- Main vs Main: stop both and damage both by relative speed.
-				applyVehicleToVehicleImpact(vehicle, data, otherVehicle)
-				data.LastBlockingObject = nil
-			else
-				-- Main vs exact BlocksVehicle Part: old building collision behaviour.
-				if data.LastBlockingObject ~= blocker then
+		local hardObstacleThisFrame = false
+
+		if otherVehicle then
+			applyVehicleToVehicleImpact(vehicle, data, otherVehicle)
+			data.LastWheelObstacle = nil
+		else
+			local tallObstacle = nil
+
+			if impactSpeed > 0.01 and movement.Magnitude > 0.0001 then
+				tallObstacle = getTallWheelObstacle(
+					vehicle,
+					data,
+					cfg,
+					movement,
+					movement.Magnitude
+				)
+			end
+
+			if tallObstacle then
+				hardObstacleThisFrame = true
+
+				-- Hard impact: damage once per continuous contact, then rebound in the
+				-- opposite direction at a fraction of the pre-impact speed.
+				--
+				-- IMPORTANT: suspension is frozen for this frame below. Without that,
+				-- repeatedly holding throttle against a wall lets the suspension solve
+				-- upward a tiny amount on every impact and the vehicle can "ratchet"
+				-- itself up a vertical obstacle.
+				if data.LastWheelObstacle ~= tallObstacle then
 					VehicleDamageManager.ApplyCollisionDamage(vehicle, impactSpeed)
 				end
 
-				data.LastBlockingObject = blocker
-				data.CurrentSpeed = 0
+				data.LastWheelObstacle = tallObstacle
+				data.BlockedThrottleDirection = data.CurrentSpeed >= 0 and 1 or -1
+
+				local incomingSpeed = data.CurrentSpeed
+				local bounceSpeed = math.abs(incomingSpeed) * DEFAULT_OBSTACLE_BOUNCE_FACTOR
+				if incomingSpeed > 0 then
+					data.CurrentSpeed = -bounceSpeed
+				elseif incomingSpeed < 0 then
+					data.CurrentSpeed = bounceSpeed
+				else
+					data.CurrentSpeed = 0
+				end
+			else
+				data.Position = proposedPosition
 			end
-		else
-			data.LastBlockingObject = nil
-			data.Position = proposedPosition
 		end
 
-		local newY, pitch, roll = updateSuspension(vehicle, data, cfg, dt)
-		data.Position = Vector3.new(data.Position.X, newY, data.Position.Z)
+		local pitch = data.Pitch or 0
+		local roll = data.Roll or 0
+
+		if not hardObstacleThisFrame and not blockedByWall then
+			local newY
+			newY, pitch, roll = updateSuspension(vehicle, data, cfg, dt)
+			data.Position = Vector3.new(data.Position.X, newY, data.Position.Z)
+		else
+			-- Do not let a hard obstacle become suspension "ground".
+			-- Keep the exact pre-impact chassis height/tilt for the impact frame.
+			data.TargetRideHeight = data.Position.Y
+		end
 
 		local mainCFrame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, pitch, roll)
 

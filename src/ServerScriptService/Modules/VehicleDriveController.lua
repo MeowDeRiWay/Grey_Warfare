@@ -483,7 +483,7 @@ local function raycastVisibleObstacle(origin, direction, distance, vehicle)
 		end
 
 		local hit = result.Instance
-		if hit and hit:IsA("BasePart") and hit.Transparency >= 1 then
+		if hit and hit:IsA("BasePart") and (hit.Transparency >= 1 or hit.CanCollide == false) then
 			table.insert(ignored, hit)
 
 			local travelled = (result.Position - currentOrigin).Magnitude
@@ -558,20 +558,53 @@ local function lerpNumber(a, b, alpha)
 	return a + (b - a) * alpha
 end
 
-local function makeGroundRaycastParams(vehicle)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { vehicle }
-	params.IgnoreWater = false
-	return params
+local function isIgnoredVehicleSurface(part)
+	if not part or not part:IsA("BasePart") then
+		return false
+	end
+
+	-- Helper/trigger geometry is not terrain for the arcade vehicle physics.
+	return part.Transparency >= 1 or part.CanCollide == false
 end
 
-local function rayGround(params, samplePosition, cfg)
+local function rayGround(vehicle, samplePosition, cfg)
 	local startHeight = math.max(0.5, cfg.Suspension_ray_start_height)
 	local rayLength = math.max(startHeight + 1, cfg.Suspension_ray_length)
-	local origin = samplePosition + Vector3.yAxis * startHeight
-	local direction = Vector3.new(0, -rayLength, 0)
-	return workspace:Raycast(origin, direction, params)
+	local direction = Vector3.new(0, -1, 0)
+	local currentOrigin = samplePosition + Vector3.yAxis * startHeight
+	local remaining = rayLength
+	local ignored = { vehicle }
+
+	-- Continue through invisible/non-collidable parts so a real road below them
+	-- can still be found by the suspension.
+	for _ = 1, 32 do
+		if remaining <= 0.001 then
+			return nil
+		end
+
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = ignored
+		params.IgnoreWater = false
+
+		local result = workspace:Raycast(currentOrigin, direction * remaining, params)
+		if not result then
+			return nil
+		end
+
+		local hit = result.Instance
+		if isIgnoredVehicleSurface(hit) then
+			table.insert(ignored, hit)
+
+			local travelled = (result.Position - currentOrigin).Magnitude
+			remaining -= travelled + 0.01
+			currentOrigin = result.Position + direction * 0.01
+		else
+			return result
+		end
+	end
+
+	return nil
 end
 
 -- One thin ray can fall exactly into a seam between imported road meshes.
@@ -598,10 +631,9 @@ local function getWheelGroundHeight(vehicle, wheel, baseMainCFrame, cfg)
 		worldPosition - forward * radius,
 	}
 
-	local params = makeGroundRaycastParams(vehicle)
 	local highestY = nil
 	for _, samplePosition in ipairs(samples) do
-		local result = rayGround(params, samplePosition, cfg)
+		local result = rayGround(vehicle, samplePosition, cfg)
 		if result then
 			local y = result.Position.Y
 			if highestY == nil or y > highestY then
@@ -817,10 +849,6 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		RideHeight = rideHeight,
 		WheelTrackWidth = width,
 		WheelBaseLength = length,
-
-		-- Persistent hard-obstacle contact state.
-		LastWheelObstacle = nil,
-		BlockedThrottleDirection = 0,
 	}
 
 	vehicle:SetAttribute("Current_speed", 0)
@@ -872,44 +900,8 @@ RunService.Heartbeat:Connect(function(dt)
 			steer = -steer
 		end
 
-		-- Persistent hard-wall lock. A rebound can create a tiny gap for one frame;
-		-- without a latch, held throttle/steering can repeatedly re-enter that gap
-		-- and slowly rotate/climb around a vertical obstacle.
-		local blockedByWall = false
-		local requestedDirection = 0
-		if throttle > 0 then
-			requestedDirection = 1
-		elseif throttle < 0 then
-			requestedDirection = -1
-		end
-
-		if requestedDirection ~= 0 and data.BlockedThrottleDirection == requestedDirection then
-			local probeDirection = forwardFromYaw(data.Yaw) * requestedDirection
-			local stillBlocked = getTallWheelObstacle(vehicle, data, cfg, probeDirection, 0)
-
-			if stillBlocked then
-				blockedByWall = true
-				steer = 0
-
-				-- Preserve an existing rebound while it moves away, but never allow
-				-- held throttle to cross zero and drive back into the wall.
-				if data.CurrentSpeed * requestedDirection >= 0 then
-					data.CurrentSpeed = 0
-				end
-			else
-				data.LastWheelObstacle = nil
-				data.BlockedThrottleDirection = 0
-			end
-		elseif requestedDirection == 0 or requestedDirection == -data.BlockedThrottleDirection then
-			-- Releasing throttle or deliberately reversing unlocks the contact.
-			data.LastWheelObstacle = nil
-			data.BlockedThrottleDirection = 0
-		end
-
 		local targetSpeed = 0
-		if blockedByWall then
-			targetSpeed = 0
-		elseif throttle > 0 then
+		if throttle > 0 then
 			targetSpeed = cfg.Speed
 		elseif throttle < 0 then
 			targetSpeed = -cfg.Speed_reverse
@@ -993,7 +985,6 @@ RunService.Heartbeat:Connect(function(dt)
 				end
 
 				data.LastWheelObstacle = tallObstacle
-				data.BlockedThrottleDirection = data.CurrentSpeed >= 0 and 1 or -1
 
 				local incomingSpeed = data.CurrentSpeed
 				local bounceSpeed = math.abs(incomingSpeed) * DEFAULT_OBSTACLE_BOUNCE_FACTOR
@@ -1005,6 +996,7 @@ RunService.Heartbeat:Connect(function(dt)
 					data.CurrentSpeed = 0
 				end
 			else
+				data.LastWheelObstacle = nil
 				data.Position = proposedPosition
 			end
 		end
@@ -1012,7 +1004,7 @@ RunService.Heartbeat:Connect(function(dt)
 		local pitch = data.Pitch or 0
 		local roll = data.Roll or 0
 
-		if not hardObstacleThisFrame and not blockedByWall then
+		if not hardObstacleThisFrame then
 			local newY
 			newY, pitch, roll = updateSuspension(vehicle, data, cfg, dt)
 			data.Position = Vector3.new(data.Position.X, newY, data.Position.Z)

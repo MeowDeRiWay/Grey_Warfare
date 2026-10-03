@@ -26,7 +26,7 @@ local function getAttr(vehicle, name, default)
 end
 
 local function getMain(vehicle)
-	local main = vehicle:FindFirstChild("Main", true)
+	local main = vehicle:FindFirstChild("Main")
 	if main and main:IsA("BasePart") then
 		return main
 	end
@@ -72,7 +72,7 @@ local function getConfig(vehicle)
 		Suspension_lerp = tonumber(getAttr(vehicle, "Suspension_lerp", DEFAULT_SUSPENSION_LERP)) or DEFAULT_SUSPENSION_LERP,
 		Suspension_up_lerp = tonumber(getAttr(vehicle, "Suspension_up_lerp", DEFAULT_SUSPENSION_UP_LERP)) or DEFAULT_SUSPENSION_UP_LERP,
 		Suspension_probe_radius = tonumber(getAttr(vehicle, "Suspension_probe_radius", DEFAULT_GROUND_PROBE_RADIUS)) or DEFAULT_GROUND_PROBE_RADIUS,
-		Suspension_ground_clearance = tonumber(getAttr(vehicle, "Suspension_ground_clearance", DEFAULT_GROUND_CLEARANCE)) or DEFAULT_GROUND_CLEARANCE,
+		Suspension_ground_clearance = tonumber(getAttr(vehicle, "Ground_clearance", getAttr(vehicle, "Suspension_ground_clearance", DEFAULT_GROUND_CLEARANCE))) or DEFAULT_GROUND_CLEARANCE,
 		Suspension_max_tilt = tonumber(getAttr(vehicle, "Suspension_max_tilt", DEFAULT_MAX_TILT_DEGREES)) or DEFAULT_MAX_TILT_DEGREES,
 	}
 end
@@ -87,12 +87,12 @@ local function moveTowards(current, target, step)
 end
 
 local function getAxisForward(cframe, axisName)
-	axisName = tostring(axisName or "-Z")
+	axisName = tostring(axisName or "Z")
 
 	if axisName == "Z" then
-		return cframe.LookVector
-	elseif axisName == "-Z" then
 		return -cframe.LookVector
+	elseif axisName == "-Z" then
+		return cframe.LookVector
 	elseif axisName == "X" then
 		return cframe.RightVector
 	elseif axisName == "-X" then
@@ -143,7 +143,7 @@ local function getActiveGroundVehicleFromPart(part, selfVehicle)
 
 	local otherData = activeVehicles[current]
 	if not otherData or otherData.Main ~= part then
-		-- Vehicle-to-vehicle collision is Main vs Main only. Wheels, modules and
+		-- Vehicle-to-vehicle collision is Main vs Main only. Modules and
 		-- decorative parts do not enlarge the collision body.
 		return nil
 	end
@@ -155,7 +155,7 @@ local function getBlockingObjectAtMainCFrame(vehicle, main, targetMainCFrame, cf
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { vehicle }
-	params.MaxParts = 100
+	params.MaxParts = 0
 
 	local scale = math.clamp(tonumber(cfg.Collision_box_scale) or 0.96, 0.1, 1)
 	local boxSize = Vector3.new(
@@ -167,7 +167,7 @@ local function getBlockingObjectAtMainCFrame(vehicle, main, targetMainCFrame, cf
 	local parts = Workspace:GetPartBoundsInBox(targetMainCFrame, boxSize, params)
 	for _, part in ipairs(parts) do
 		-- Main-vs-Main vehicle collision is kept. World geometry is no longer
-		-- controlled by BlocksVehicle; wheel probes decide whether terrain/parts
+		-- controlled by BlocksVehicle; body probes decide whether terrain/parts
 		-- are climbable.
 		local otherVehicle = getActiveGroundVehicleFromPart(part, vehicle)
 		if otherVehicle then
@@ -309,7 +309,7 @@ local function makeVehicleArcadeSafe(vehicle)
 		if item:IsA("BasePart") then
 			item.Anchored = true
 			item.CanCollide = false
-			item.CanTouch = true
+			item.CanTouch = not (item:IsA("Seat") or item:IsA("VehicleSeat"))
 			item.Massless = true
 			item.AssemblyLinearVelocity = Vector3.zero
 			item.AssemblyAngularVelocity = Vector3.zero
@@ -317,13 +317,53 @@ local function makeVehicleArcadeSafe(vehicle)
 	end
 end
 
--- IMPORTANT: move the whole vehicle by the delta from the CURRENT Main CFrame.
--- Do not cache Model pivot offset: models with imported parts / unusual pivots can
--- visually "explode" when pitch/roll are applied around a stale or remote pivot.
-local function pivotVehicleByMain(vehicle, main, targetMainCFrame)
-	local currentPivot = vehicle:GetPivot()
-	local delta = targetMainCFrame * main.CFrame:Inverse()
-	vehicle:PivotTo(delta * currentPivot)
+-- The anchored chassis has one immutable layout relative to Main.
+-- Keep mounted modules outside this snapshot: their motors must remain movable.
+local function captureChassisLayout(vehicle, main)
+ local layout = {}
+ local mounted = vehicle:FindFirstChild("MountedModules")
+ for _, part in ipairs(vehicle:GetDescendants()) do
+  if part:IsA("BasePart") and not (mounted and part:IsDescendantOf(mounted)) then
+   layout[part] = main.CFrame:ToObjectSpace(part.CFrame)
+  end
+ end
+ -- Physical chassis welds are redundant for anchored scripted parts. Remove only
+ -- constraints whose two endpoints both belong to this fixed chassis.
+ for _, joint in ipairs(vehicle:GetDescendants()) do
+  if joint:IsA("WeldConstraint") and layout[joint.Part0] and layout[joint.Part1] then
+   joint:Destroy()
+  end
+ end
+ return layout
+end
+
+local function pivotVehicleByMain(vehicle, main, targetMainCFrame, layout)
+ local delta = targetMainCFrame * main.CFrame:Inverse()
+ local mounted = vehicle:FindFirstChild("MountedModules")
+ if mounted then
+  -- Snapshot before changing any chassis part: attached assemblies may respond
+  -- to socket transforms, and must not receive the chassis delta twice.
+  local targets = {}
+  for _, module in ipairs(mounted:GetChildren()) do
+   if module:IsA("Model") then
+    targets[module] = delta * module:GetPivot()
+   end
+  end
+  for part, offset in pairs(layout) do
+   if part.Parent and part:IsDescendantOf(vehicle) then
+    part.CFrame = targetMainCFrame * offset
+   end
+  end
+  for module, target in pairs(targets) do
+   if module.Parent then module:PivotTo(target) end
+  end
+ else
+  for part, offset in pairs(layout) do
+   if part.Parent and part:IsDescendantOf(vehicle) then
+    part.CFrame = targetMainCFrame * offset
+   end
+  end
+ end
 end
 
 local function buildVisualCFrame(position, yaw, pitch, roll)
@@ -332,12 +372,12 @@ local function buildVisualCFrame(position, yaw, pitch, roll)
 end
 
 local function visualToMainCFrame(visualCFrame, axisName)
-	axisName = tostring(axisName or "-Z")
+	axisName = tostring(axisName or "Z")
 
 	if axisName == "Z" then
-		return visualCFrame
-	elseif axisName == "-Z" then
 		return visualCFrame * CFrame.Angles(0, math.rad(180), 0)
+	elseif axisName == "-Z" then
+		return visualCFrame
 	elseif axisName == "X" then
 		return visualCFrame * CFrame.Angles(0, math.rad(90), 0)
 	elseif axisName == "-X" then
@@ -351,114 +391,28 @@ buildMainCFrame = function(position, yaw, axisName, pitch, roll)
 	return visualToMainCFrame(buildVisualCFrame(position, yaw, pitch, roll), axisName)
 end
 
-local function looksLikeWheel(part)
-	if not part:IsA("BasePart") then
-		return false
-	end
-
-	if part:GetAttribute("Wheel") == true then
-		return true
-	end
-
-	local name = string.lower(part.Name)
-	return string.find(name, "wheel", 1, true) ~= nil
-		or string.find(name, "tire", 1, true) ~= nil
-		or string.find(name, "tyre", 1, true) ~= nil
+-- Four numerical support points derived from Main; no wheel Instances required.
+local function collectGroundProbes(vehicle, main)
+ local axis = tostring(getAttr(vehicle, "Drive_forward_axis", "Z"))
+ local yaw = yawFromForward(getAxisForward(main.CFrame, axis))
+ local frame = buildMainCFrame(Vector3.zero, yaw, axis, 0, 0)
+ local visual = buildVisualCFrame(Vector3.zero, yaw, 0, 0)
+ local width = (axis == "X" or axis == "-X") and main.Size.Z or main.Size.X
+ local length = (axis == "X" or axis == "-X") and main.Size.X or main.Size.Z
+ local probes = {}
+ for _, side in ipairs({-1, 1}) do
+  for _, front in ipairs({-1, 1}) do
+   local worldOffset = visual.RightVector * side * width * 0.45
+    + visual.LookVector * front * length * 0.45
+   table.insert(probes, {
+    LocalPosition = frame:VectorToObjectSpace(worldOffset),
+    Side = side < 0 and "L" or "R", Index = front > 0 and 0 or 1,
+   })
+  end
+ end
+ return probes, width * 0.9, length * 0.9
 end
 
-local function collectWheels(vehicle, main)
-	local candidates = {}
-
-	for _, item in ipairs(vehicle:GetDescendants()) do
-		if looksLikeWheel(item) then
-			local localPos = main.CFrame:PointToObjectSpace(item.Position)
-			local smallestAxis = math.min(item.Size.X, item.Size.Y, item.Size.Z)
-			local autoProbeRadius = math.clamp(smallestAxis * 0.30, 0.15, 0.65)
-
-			table.insert(candidates, {
-				Part = item,
-				LocalPosition = localPos,
-				ExplicitSide = tostring(item:GetAttribute("WheelSide") or ""),
-				ExplicitIndex = tonumber(item:GetAttribute("WheelIndex")),
-				ProbeRadius = autoProbeRadius,
-			})
-		end
-	end
-
-	if #candidates == 0 then
-		return {}
-	end
-
-	local axisName = tostring(getAttr(vehicle, "Drive_forward_axis", "-Z"))
-	local forwardLocal
-	if axisName == "X" then
-		forwardLocal = Vector3.xAxis
-	elseif axisName == "-X" then
-		forwardLocal = -Vector3.xAxis
-	elseif axisName == "Z" then
-		forwardLocal = Vector3.zAxis
-	else
-		forwardLocal = -Vector3.zAxis
-	end
-
-	local rightLocal = forwardLocal:Cross(Vector3.yAxis)
-	-- Right vector must match buildVisualCFrame/LookAt orientation; previous cross order inverted L/R.
-	if rightLocal.Magnitude < 0.01 then
-		rightLocal = Vector3.xAxis
-	else
-		rightLocal = rightLocal.Unit
-	end
-
-	local forwardDots = {}
-	for _, wheel in ipairs(candidates) do
-		wheel.ForwardDot = wheel.LocalPosition:Dot(forwardLocal)
-		wheel.RightDot = wheel.LocalPosition:Dot(rightLocal)
-		table.insert(forwardDots, wheel.ForwardDot)
-	end
-
-	table.sort(forwardDots)
-	local splitForward = 0
-	if #forwardDots >= 2 then
-		local mid = math.floor(#forwardDots / 2)
-		if #forwardDots % 2 == 0 then
-			splitForward = (forwardDots[mid] + forwardDots[mid + 1]) * 0.5
-		else
-			splitForward = forwardDots[mid + 1]
-		end
-	end
-
-	local wheels = {}
-	for _, wheel in ipairs(candidates) do
-		local side = wheel.ExplicitSide
-		if side ~= "L" and side ~= "R" then
-			side = wheel.RightDot < 0 and "L" or "R"
-		end
-
-		local index = wheel.ExplicitIndex
-		if index == nil then
-			-- 0 = передня вісь, 1 = задня.
-			index = wheel.ForwardDot >= splitForward and 0 or 1
-		end
-
-		table.insert(wheels, {
-			Part = wheel.Part,
-			Side = side,
-			Index = index,
-			LocalPosition = wheel.LocalPosition,
-			ProbeRadius = wheel.ProbeRadius,
-		})
-	end
-
-	return wheels
-end
-
--- Wheel obstacle rule:
--- * every wheel checks the exact BasePart immediately in its travel direction;
--- * the probe runs through the wheel centre;
--- * if a BasePart reaches that centre height, it is too tall -> stop + damage;
--- * if it stays below the centre, this horizontal probe misses it and the existing
---   suspension/ground rays are free to lift the vehicle onto it.
--- No folder/model/tag/BlocksVehicle lookup is involved. A BasePart can live anywhere.
 local function raycastVisibleObstacle(origin, direction, distance, vehicle)
 	-- Fully transparent helper/trigger parts must not stop a vehicle.
 	-- Recast after each transparent hit so a real wall behind an invisible zone
@@ -497,44 +451,36 @@ local function raycastVisibleObstacle(origin, direction, distance, vehicle)
 	return nil
 end
 
-local function getTallWheelObstacle(vehicle, data, cfg, movementDirection, travelDistance)
-	if #data.Wheels == 0 or movementDirection.Magnitude < 0.001 then
-		return nil
-	end
-
-	local baseMainCFrame = buildMainCFrame(
-		data.Position,
-		data.Yaw,
-		data.DriveForwardAxis,
-		data.Pitch,
-		data.Roll
-	)
-
-	local direction = movementDirection.Unit
-	local configuredDistance = math.max(0.1, tonumber(cfg.Obstacle_check_distance) or 4)
-
-	for _, wheel in ipairs(data.Wheels) do
-		local wheelCenter = baseMainCFrame:PointToWorldSpace(wheel.LocalPosition)
-		local radius = math.max(0.1, tonumber(wheel.ProbeRadius) or 0.35)
-
-		-- Only look far enough to cover this frame plus the wheel's front edge.
-		-- Obstacle_check_distance remains an upper safety cap, not a premature stop range.
-		local probeDistance = math.min(
-			configuredDistance,
-			math.max(0.2, travelDistance + radius + 0.15)
-		)
-
-		-- Probe at wheel-centre height. Anything below this line remains climbable
-		-- by the suspension. A visible BasePart crossing this line is a hard impact.
-		local origin = wheelCenter
-		local result = raycastVisibleObstacle(origin, direction, probeDistance, vehicle)
-
-		if result and result.Instance and result.Instance:IsA("BasePart") then
-			return result.Instance, wheel
-		end
-	end
-
-	return nil, nil
+local function getTallBodyObstacle(vehicle, data, cfg, movementDirection, travelDistance)
+ if movementDirection.Magnitude < 0.001 then return nil end
+ local frame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, data.Pitch, data.Roll)
+ local direction = movementDirection.Unit
+ local stepHeight = math.max(0.01, tonumber(vehicle:GetAttribute("Ground_step_height")) or math.min(0.35, data.Main.Size.Y * 0.25))
+ -- Sweep a small grid across the body, including its centre and upper edge.
+ -- Distance always covers the whole frame, including slow server frames.
+ local offsets = {}
+ local localDirection = frame:VectorToObjectSpace(direction)
+ local alongX = math.abs(localDirection.X) > math.abs(localDirection.Z)
+ local sign = (alongX and localDirection.X or localDirection.Z) >= 0 and 1 or -1
+ for _, side in ipairs({-0.48, -0.24, 0, 0.24, 0.48}) do
+  for _, y in ipairs({-data.Main.Size.Y / 2 + stepHeight, 0, data.Main.Size.Y * 0.45}) do
+   table.insert(offsets, alongX
+    and Vector3.new(sign * data.Main.Size.X * 0.48, y, side * data.Main.Size.Z)
+    or Vector3.new(side * data.Main.Size.X, y, sign * data.Main.Size.Z * 0.48))
+  end
+ end
+ for _, offset in ipairs(offsets) do
+  local origin = frame:PointToWorldSpace(offset)
+  local result = raycastVisibleObstacle(origin, direction, travelDistance + 0.05, vehicle)
+  if result then
+   -- Sloping terrain is checked from support normals below. Near-vertical faces block.
+   if result.Normal.Y < math.cos(math.rad(math.clamp(tonumber(vehicle:GetAttribute("Ground_slope_limit")) or 45, 0, 89))) or (result.Instance:IsA("BasePart")
+    and result.Instance:GetAttribute("BlocksVehicle") == true) then
+    return result.Instance
+   end
+  end
+ end
+ return nil
 end
 
 local function average(values)
@@ -607,204 +553,60 @@ local function rayGround(vehicle, samplePosition, cfg)
 	return nil
 end
 
--- One thin ray can fall exactly into a seam between imported road meshes.
--- Probe a small footprint around each wheel and use the highest real surface hit.
--- This still reads the visible Part/MeshPart itself; there are no invisible support parts.
-local function getWheelGroundHeight(vehicle, wheel, baseMainCFrame, cfg)
-	local worldPosition = baseMainCFrame:PointToWorldSpace(wheel.LocalPosition)
-
-	-- Use horizontal axes from the supplied vehicle frame so the footprint follows the car.
-	local right = flatUnit(baseMainCFrame.RightVector, Vector3.xAxis)
-	local forward = flatUnit(baseMainCFrame.LookVector, Vector3.new(0, 0, -1))
-
-	local radius = tonumber(cfg.Suspension_probe_radius) or DEFAULT_GROUND_PROBE_RADIUS
-	if wheel.ProbeRadius then
-		radius = math.max(radius, wheel.ProbeRadius)
-	end
-	radius = math.clamp(radius, 0, 0.75)
-
-	local samples = {
-		worldPosition,
-		worldPosition + right * radius,
-		worldPosition - right * radius,
-		worldPosition + forward * radius,
-		worldPosition - forward * radius,
-	}
-
-	local highestY = nil
-	for _, samplePosition in ipairs(samples) do
-		local result = rayGround(vehicle, samplePosition, cfg)
-		if result then
-			local y = result.Position.Y
-			if highestY == nil or y > highestY then
-				highestY = y
-			end
-		end
-	end
-
-	return highestY
-end
-
-local function calculateInitialRideHeight(vehicle, main, wheels)
-	if #wheels == 0 then
-		return 0
-	end
-
-	local cfg = getConfig(vehicle)
-	local heights = {}
-
-	for _, wheel in ipairs(wheels) do
-		local groundY = getWheelGroundHeight(vehicle, wheel, main.CFrame, cfg)
-		if groundY then
-			table.insert(heights, groundY)
-		end
-	end
-
-	local groundY = average(heights)
-	if not groundY then
-		return 0
-	end
-
-	return main.Position.Y - groundY
-end
-
-local function updateSuspension(vehicle, data, cfg, dt)
-	if cfg.Suspension_enabled ~= true or #data.Wheels < 3 then
-		data.Pitch = moveTowards(data.Pitch, 0, dt * 2)
-		data.Roll = moveTowards(data.Roll, 0, dt * 2)
-		return data.Position.Y, data.Pitch, data.Roll
-	end
-
-	local baseMainCFrame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, 0, 0)
-
-	local allHeights = {}
-	local leftHeights = {}
-	local rightHeights = {}
-	local frontHeights = {}
-	local backHeights = {}
-
-	local minIndex = math.huge
-	local maxIndex = -math.huge
-
-	for _, wheel in ipairs(data.Wheels) do
-		if wheel.Index < minIndex then
-			minIndex = wheel.Index
-		end
-		if wheel.Index > maxIndex then
-			maxIndex = wheel.Index
-		end
-	end
-
-	local leftPositions = {}
-	local rightPositions = {}
-	local frontPositions = {}
-	local backPositions = {}
-
-	for _, wheel in ipairs(data.Wheels) do
-		local worldPosition = baseMainCFrame:PointToWorldSpace(wheel.LocalPosition)
-		local groundY = getWheelGroundHeight(vehicle, wheel, baseMainCFrame, cfg)
-
-		if groundY then
-			table.insert(allHeights, groundY)
-
-			if wheel.Side == "L" then
-				table.insert(leftHeights, groundY)
-				table.insert(leftPositions, worldPosition)
-			elseif wheel.Side == "R" then
-				table.insert(rightHeights, groundY)
-				table.insert(rightPositions, worldPosition)
-			end
-
-			if wheel.Index == minIndex then
-				table.insert(frontHeights, groundY)
-				table.insert(frontPositions, worldPosition)
-			elseif wheel.Index == maxIndex then
-				table.insert(backHeights, groundY)
-				table.insert(backPositions, worldPosition)
-			end
-		end
-	end
-
-	local averageGroundY = average(allHeights)
-	if not averageGroundY then
-		data.Pitch = moveTowards(data.Pitch, 0, dt * 2)
-		data.Roll = moveTowards(data.Roll, 0, dt * 2)
-		return data.Position.Y, data.Pitch, data.Roll
-	end
-
-	local targetY = averageGroundY + data.RideHeight + cfg.Suspension_ground_clearance
-
-	local leftY = average(leftHeights)
-	local rightY = average(rightHeights)
-	local frontY = average(frontHeights)
-	local backY = average(backHeights)
-
-	local width = data.WheelTrackWidth
-	local length = data.WheelBaseLength
-
-	local targetRoll = 0
-	if leftY and rightY and width > 0.1 then
-		-- Праве колесо вище => кузов нахиляється вліво/вправо по аркадній площині.
-		targetRoll = math.atan((rightY - leftY) / width)
-	end
-
-	local targetPitch = 0
-	if frontY and backY and length > 0.1 then
-		-- Перед вище => морда піднімається.
-		targetPitch = math.atan((frontY - backY) / length)
-	end
-
-	targetPitch = clampAngle(targetPitch, cfg.Suspension_max_tilt)
-	targetRoll = clampAngle(targetRoll, cfg.Suspension_max_tilt)
-
-	local downAlpha = math.clamp(cfg.Suspension_lerp * dt, 0, 1)
-	local upAlpha = math.clamp(cfg.Suspension_up_lerp * dt, 0, 1)
-	local poseAlpha = targetY > data.Position.Y and upAlpha or downAlpha
-
-	data.Pitch = lerpNumber(data.Pitch, targetPitch, poseAlpha)
-	data.Roll = lerpNumber(data.Roll, targetRoll, poseAlpha)
-
-	-- Rising onto a road/curb must react much faster than falling off it.
-	-- Otherwise the arcade PivotTo movement can visually push wheels through the mesh
-	-- for several frames before the old lerp catches up.
-	local smoothY = lerpNumber(data.Position.Y, targetY, poseAlpha)
-	if targetY > data.Position.Y and math.abs(targetY - smoothY) < 0.03 then
-		smoothY = targetY
-	end
-
-	return smoothY, data.Pitch, data.Roll
-end
-
-local function calculateWheelDimensions(wheels, mainCFrame, yaw, axisName)
-	if #wheels < 2 then
-		return 1, 1
-	end
-
-	local visualCFrame = buildVisualCFrame(mainCFrame.Position, yaw, 0, 0)
-	local visualRight = visualCFrame.RightVector
-	local visualForward = visualCFrame.LookVector
-
-	local minRight = math.huge
-	local maxRight = -math.huge
-	local minForward = math.huge
-	local maxForward = -math.huge
-
-	for _, wheel in ipairs(wheels) do
-		local worldPosition = mainCFrame:PointToWorldSpace(wheel.LocalPosition)
-		local relative = worldPosition - mainCFrame.Position
-
-		local rightDot = relative:Dot(visualRight)
-		local forwardDot = relative:Dot(visualForward)
-
-		minRight = math.min(minRight, rightDot)
-		maxRight = math.max(maxRight, rightDot)
-		minForward = math.min(minForward, forwardDot)
-		maxForward = math.max(maxForward, forwardDot)
-	end
-
-	local width = math.max(1, maxRight - minRight)
-	local length = math.max(1, maxForward - minForward)
-	return width, length
+local function updateGroundPose(vehicle, data, cfg, dt)
+ local frame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, 0, 0)
+ local all, left, right, front, back = {}, {}, {}, {}, {}
+ local samples = {}
+ local steep = false
+ local slopeLimit = math.cos(math.rad(math.clamp(tonumber(vehicle:GetAttribute("Ground_slope_limit")) or 45, 0, 89)))
+ for _, probe in ipairs(data.GroundProbes) do
+  local pos = frame:PointToWorldSpace(probe.LocalPosition)
+  local hit = rayGround(vehicle, pos, cfg)
+  if hit then
+   if hit.Normal.Y < slopeLimit then steep = true end
+   local h = hit.Position.Y
+   table.insert(samples, {Height = h, Offset = probe.LocalPosition})
+   table.insert(all, h)
+   table.insert(probe.Side == "L" and left or right, h)
+   table.insert(probe.Index == 0 and front or back, h)
+  end
+ end
+ local centerHit = rayGround(vehicle, data.Position, cfg)
+ if centerHit then
+  table.insert(all, centerHit.Position.Y)
+  table.insert(samples, {Height = centerHit.Position.Y, Offset = Vector3.zero})
+  if centerHit.Normal.Y < slopeLimit then steep = true end
+ end
+ if steep then return data.Position.Y, data.Pitch, data.Roll, true end
+ local ground = average(all)
+ if not ground then
+  data.FallSpeed = (data.FallSpeed or 0) + 9.8 * dt
+  return data.Position.Y - data.FallSpeed * dt, data.Pitch, data.Roll, false
+ end
+ data.FallSpeed = 0
+ local targetPitch, targetRoll = 0, 0
+ local l, r, f, b = average(left), average(right), average(front), average(back)
+ if f and b then targetPitch = math.atan((f - b) / math.max(0.01, data.GroundLength)) end
+ if l and r then targetRoll = math.atan((r - l) / math.max(0.01, data.GroundWidth)) end
+ targetPitch = clampAngle(targetPitch, cfg.Suspension_max_tilt)
+ targetRoll = clampAngle(targetRoll, cfg.Suspension_max_tilt)
+ if cfg.Suspension_enabled == false then targetPitch, targetRoll = 0, 0 end
+ local alpha = 1 - math.exp(-math.max(0, cfg.Suspension_lerp) * dt)
+ data.Pitch = lerpNumber(data.Pitch, targetPitch, alpha)
+ data.Roll = lerpNumber(data.Roll, targetRoll, alpha)
+ -- Fit the underside to the support plane; do not add the highest terrain
+ -- height and the full tilt extent together (that makes slopes look like hovering).
+ local tilted = buildMainCFrame(Vector3.zero, data.Yaw, data.DriveForwardAxis, data.Pitch, data.Roll)
+ local targetY = -math.huge
+ for _, sample in ipairs(samples) do
+  local bottomOffset = sample.Offset - Vector3.yAxis * data.RideHeight
+  local requiredY = sample.Height - tilted:VectorToWorldSpace(bottomOffset).Y
+  targetY = math.max(targetY, requiredY)
+ end
+ targetY += cfg.Suspension_ground_clearance
+ -- Lift immediately to avoid penetrating curbs, smooth only downward travel.
+ local newY = targetY >= data.Position.Y and targetY or lerpNumber(data.Position.Y, targetY, alpha)
+ return newY, data.Pitch, data.Roll, false
 end
 
 function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
@@ -822,17 +624,19 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 	end
 
 	makeVehicleArcadeSafe(vehicle)
+	vehicle.PrimaryPart = main
+	local chassisLayout = captureChassisLayout(vehicle, main)
 	VehicleDamageManager.RegisterVehicle(vehicle)
 
-	local axisName = tostring(getAttr(vehicle, "Drive_forward_axis", "-Z"))
+	local axisName = tostring(getAttr(vehicle, "Drive_forward_axis", "Z"))
 	local currentForward = getAxisForward(main.CFrame, axisName)
 	local currentYaw = yawFromForward(currentForward)
-	local wheels = collectWheels(vehicle, main)
-	local rideHeight = tonumber(vehicle:GetAttribute("Suspension_body_height")) or calculateInitialRideHeight(vehicle, main, wheels)
-	local width, length = calculateWheelDimensions(wheels, main.CFrame, currentYaw, axisName)
+	local probes, width, length = collectGroundProbes(vehicle, main)
+	local rideHeight = math.max(main.Size.Y / 2, tonumber(vehicle:GetAttribute("Ground_body_height")) or main.Size.Y / 2)
 
 	activeVehicles[vehicle] = {
 		Main = main,
+		ChassisLayout = chassisLayout,
 		Seat = seat,
 		Owner = ownerPlayer,
 
@@ -845,10 +649,10 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		Position = main.Position,
 		DriveForwardAxis = axisName,
 
-		Wheels = wheels,
+		GroundProbes = probes,
 		RideHeight = rideHeight,
-		WheelTrackWidth = width,
-		WheelBaseLength = length,
+		GroundWidth = width,
+		GroundLength = length,
 	}
 
 	vehicle:SetAttribute("Current_speed", 0)
@@ -858,8 +662,8 @@ function VehicleDriveController.RegisterVehicle(vehicle, ownerPlayer)
 		vehicle.Name,
 		"Axis:",
 		axisName,
-		"Wheels:",
-		#wheels,
+		"GroundProbes:",
+		#probes,
 		"RideHeight:",
 		rideHeight
 	)
@@ -870,6 +674,7 @@ function VehicleDriveController.UnregisterVehicle(vehicle)
 end
 
 RunService.Heartbeat:Connect(function(dt)
+	dt = math.min(dt, 0.1)
 	for vehicle, data in pairs(activeVehicles) do
 		if not vehicle.Parent then
 			activeVehicles[vehicle] = nil
@@ -887,12 +692,13 @@ RunService.Heartbeat:Connect(function(dt)
 		clearVehicleContactIfSeparated(data)
 
 		local cfg = getConfig(vehicle)
-		local hasFuel = consumeFuel(vehicle, data, cfg, dt)
+		local hasFuel = (tonumber(vehicle:GetAttribute("Fuel_cur")) or cfg.Fuel_max) > 0
 
-		local throttle = seat.Throttle
-		local steer = seat.Steer
+		local throttle = seat.Occupant and seat.Throttle or 0
+		local steer = seat.Occupant and seat.Steer or 0
 
 		if not hasFuel then
+			data.CurrentSpeed = 0
 			throttle = 0
 		end
 
@@ -933,11 +739,13 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local impactSpeed = math.abs(data.CurrentSpeed)
 		local movement = forward * data.CurrentSpeed * dt
+		local previousPosition = data.Position
+		local previousPitch, previousRoll = data.Pitch, data.Roll
 		local proposedPosition = data.Position + movement
 		local otherVehicle = nil
 
-		-- Keep the existing Main-vs-Main collision only for other active vehicles.
-		if impactSpeed > 0.01 then
+		-- Sweep Main against other active ground vehicles.
+		if movement.Magnitude > 0.0001 then
 			local _, _, detectedVehicle = sweepMainForBlockingObject(
 				vehicle,
 				main,
@@ -956,12 +764,12 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if otherVehicle then
 			applyVehicleToVehicleImpact(vehicle, data, otherVehicle)
-			data.LastWheelObstacle = nil
+			data.LastBodyObstacle = nil
 		else
 			local tallObstacle = nil
 
 			if impactSpeed > 0.01 and movement.Magnitude > 0.0001 then
-				tallObstacle = getTallWheelObstacle(
+				tallObstacle = getTallBodyObstacle(
 					vehicle,
 					data,
 					cfg,
@@ -980,11 +788,11 @@ RunService.Heartbeat:Connect(function(dt)
 				-- repeatedly holding throttle against a wall lets the suspension solve
 				-- upward a tiny amount on every impact and the vehicle can "ratchet"
 				-- itself up a vertical obstacle.
-				if data.LastWheelObstacle ~= tallObstacle then
+				if data.LastBodyObstacle ~= tallObstacle then
 					VehicleDamageManager.ApplyCollisionDamage(vehicle, impactSpeed)
 				end
 
-				data.LastWheelObstacle = tallObstacle
+				data.LastBodyObstacle = tallObstacle
 
 				local incomingSpeed = data.CurrentSpeed
 				local bounceSpeed = math.abs(incomingSpeed) * DEFAULT_OBSTACLE_BOUNCE_FACTOR
@@ -996,7 +804,7 @@ RunService.Heartbeat:Connect(function(dt)
 					data.CurrentSpeed = 0
 				end
 			else
-				data.LastWheelObstacle = nil
+				data.LastBodyObstacle = nil
 				data.Position = proposedPosition
 			end
 		end
@@ -1006,8 +814,16 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if not hardObstacleThisFrame then
 			local newY
-			newY, pitch, roll = updateSuspension(vehicle, data, cfg, dt)
-			data.Position = Vector3.new(data.Position.X, newY, data.Position.Z)
+			local steep
+   newY, pitch, roll, steep = updateGroundPose(vehicle, data, cfg, dt)
+   if steep then
+    data.Position = previousPosition
+    data.Pitch, data.Roll = previousPitch, previousRoll
+    pitch, roll = previousPitch, previousRoll
+    data.CurrentSpeed = 0
+   else
+    data.Position = Vector3.new(data.Position.X, newY, data.Position.Z)
+   end
 		else
 			-- Do not let a hard obstacle become suspension "ground".
 			-- Keep the exact pre-impact chassis height/tilt for the impact frame.
@@ -1016,9 +832,11 @@ RunService.Heartbeat:Connect(function(dt)
 
 		local mainCFrame = buildMainCFrame(data.Position, data.Yaw, data.DriveForwardAxis, pitch, roll)
 
-		-- Same stable Main-relative movement used by the old arcade anchored fix.
-		pivotVehicleByMain(vehicle, main, mainCFrame)
+		-- Restore the fixed chassis layout; move mounted modules separately.
+		pivotVehicleByMain(vehicle, main, mainCFrame, data.ChassisLayout)
 
+		local travelled = data.Position - previousPosition
+		consumeFuel(vehicle, {CurrentSpeed = Vector3.new(travelled.X, 0, travelled.Z).Magnitude / math.max(dt, 0.0001)}, cfg, dt)
 		vehicle:SetAttribute("Current_speed", math.abs(data.CurrentSpeed))
 	end
 end)

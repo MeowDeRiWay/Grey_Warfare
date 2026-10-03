@@ -16,7 +16,8 @@ local camera = workspace.CurrentCamera
 	- enter and leave optical sights.
 
 	GAME RULE:
-	The game is first-person only. There is no third-person vehicle camera.
+	Infantry and aircraft retain first person. Ground models can set View_distance
+	(legacy alias View_dst): positive = exterior camera, zero = first person.
 
 	SIGHT SEQUENCE
 	--------------
@@ -479,6 +480,33 @@ local function updateVehicleCamera(seat, vehicle, mouseDelta)
 		MIN_PITCH,
 		MAX_PITCH
 	)
+
+ -- Ground vehicle exterior camera. Helicopter behaviour stays unchanged.
+ local isHelicopter = vehicle:GetAttribute("VehicleType") == "Helicopter"
+ local distance = tonumber(vehicle:GetAttribute("View_distance"))
+ if distance == nil then distance = tonumber(vehicle:GetAttribute("View_dst")) end
+ if distance == nil then distance = 12 end
+ distance = math.clamp(distance, 0, 1000)
+ if not isHelicopter and distance > 0 then
+  local main = vehicle:FindFirstChild("Main") or vehicle.PrimaryPart
+  local focus = main and main.Position or seat.Position
+  local rotation = seat.CFrame.Rotation
+   * CFrame.Angles(0, vehicleYaw, 0)
+   * CFrame.Angles(vehiclePitch, 0, 0)
+  local direction = rotation.LookVector
+  local desired = focus - direction * distance
+  local params = RaycastParams.new()
+  params.FilterType = Enum.RaycastFilterType.Exclude
+  local ignored = {vehicle}
+  if player.Character then table.insert(ignored, player.Character) end
+  params.FilterDescendantsInstances = ignored
+  params.RespectCanCollide = true
+  params.IgnoreWater = true
+  local hit = workspace:Raycast(focus, desired - focus, params)
+  local position = hit and (hit.Position + direction * 0.2) or desired
+  camera.CFrame = CFrame.new(position) * rotation
+  return
+ end
 
 	-- IMPORTANT:
 	-- Sitting must never move the camera origin to Driver_seat/Main/model pivot.

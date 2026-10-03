@@ -26,14 +26,6 @@ local function getActiveVehiclesFolder()
 	return folder
 end
 
-local function getTeamColorPart(vehicle)
-	local part = vehicle:FindFirstChild("Team_color", true)
-	if part and part:IsA("BasePart") then
-		return part
-	end
-	return nil
-end
-
 local function getDriverSeat(vehicle)
 	local seat = vehicle:FindFirstChild("Driver_seat", true)
 	if seat and (seat:IsA("VehicleSeat") or seat:IsA("Seat")) then
@@ -59,10 +51,12 @@ local function getLandingPart(vehicle)
 end
 
 local function paintVehicle(vehicle, teamOwner)
-	local colorPart = getTeamColorPart(vehicle)
-	if colorPart then
-		colorPart.Color = TeamColors.GetColor(teamOwner)
-	end
+ local color = TeamColors.GetColor(teamOwner or 0)
+ for _, part in ipairs(vehicle:GetDescendants()) do
+  if part:IsA("BasePart") and (part.Name == "Team_color" or part:GetAttribute("Team_color") == true) then
+   part.Color = color
+  end
+ end
 end
 
 local function isPlane(vehicle)
@@ -82,12 +76,9 @@ local function prepareVehicle(vehicle)
 			item.AssemblyLinearVelocity = Vector3.zero
 			item.AssemblyAngularVelocity = Vector3.zero
 
-			if vehicle:GetAttribute("VehicleType") == "Helicopter" or isPlane(vehicle) then
-				-- Гелік і літак рухаються аркадно через PivotTo.
-				item.Anchored = true
-			else
-				item.Anchored = false
-			end
+   -- All families use scripted movement. Ground parts must already be
+   -- anchored before parenting/spawn so physics cannot alter their layout.
+   item.Anchored = true
 		end
 	end
 end
@@ -169,6 +160,9 @@ local function seatOwner(player, vehicle)
 	end
 
 	task.wait(0.15)
+	if not isPlane(vehicle) and vehicle:GetAttribute("VehicleType") ~= "Helicopter" then
+		driverSeat.Disabled = false
+	end
 	driverSeat:Sit(humanoid)
 end
 
@@ -201,9 +195,13 @@ local function registerController(vehicle, player)
 end
 
 local function getNormalVehicleSpawnCFrame(vehicle, spawnCFrame)
-	local vehicleSize = vehicle:GetExtentsSize()
-	local offsetY = (vehicleSize.Y / 2) + 0.2
-	return spawnCFrame + Vector3.new(0, offsetY, 0)
+ local main = getMain(vehicle)
+ if not main then return spawnCFrame end
+ local clearance = math.max(0, tonumber(vehicle:GetAttribute("Spawn_clearance")) or 0.2)
+ local ride = math.max(main.Size.Y / 2, tonumber(vehicle:GetAttribute("Ground_body_height")) or main.Size.Y / 2)
+ local rotation = spawnCFrame.Rotation
+ local target = CFrame.new(spawnCFrame.Position + Vector3.yAxis * (ride + clearance)) * rotation
+ return target * main.CFrame:Inverse() * vehicle:GetPivot()
 end
 
 local function getHelicopterSpawnCFrame(vehicle, spawnCFrame)
@@ -308,6 +306,10 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 	vehicle:SetAttribute("TeamOwner", teamOwner or 0)
 	vehicle:SetAttribute("OwnerUserId", player.UserId)
 	vehicle:SetAttribute("OwnerName", player.Name)
+ if not isPlane(vehicle) and vehicle:GetAttribute("VehicleType") ~= "Helicopter"
+  and vehicle:GetAttribute("View_distance") == nil and vehicle:GetAttribute("View_dst") == nil then
+  vehicle:SetAttribute("View_distance", 12)
+ end
 
 	local maxHealth = vehicle:GetAttribute("HP_max")
 	if maxHealth and vehicle:GetAttribute("HP_cur") == 0 then
@@ -346,8 +348,8 @@ function VehicleSpawner.SpawnVehicle(player, folderName, vehicleName, spawnCFram
 		registerController(vehicle, player)
 		seatOwner(player, vehicle)
 	else
-		seatOwner(player, vehicle)
 		registerController(vehicle, player)
+		seatOwner(player, vehicle)
 	end
 
 	print("[VehicleSpawner] Spawned vehicle:", vehicle.Name, "Folder:", folderName)

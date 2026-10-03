@@ -82,11 +82,8 @@ local function getMountedModules(vehicle)
 end
 
 local function isRocketLauncher(module)
-	if module:GetAttribute("Ammo_cur") ~= nil
-		or module:GetAttribute("Ammo_max") ~= nil
-	then
-		return true
-	end
+	local muzzle = module:FindFirstChild("Launcher", true)
+	if muzzle and muzzle:IsA("BasePart") then return true end
 
 	for _, item in ipairs(module:GetDescendants()) do
 		if item:IsA("BasePart")
@@ -303,6 +300,11 @@ local function getCalculatorAmmo(module)
 end
 
 local function getRSZVLaunchDirection(module)
+ local muzzle = module:FindFirstChild("Launcher", true)
+ if muzzle and muzzle:IsA("BasePart") then
+  local axis = muzzle:GetAttribute("Launch_axis") or module:GetAttribute("Launch_axis") or "-X"
+  return muzzle.CFrame:VectorToWorldSpace(axisToLocalVector(axis, "-X")).Unit
+ end
 	local loadedAmmo = getLoadedAmmo(module)
 
 	if loadedAmmo then

@@ -135,14 +135,6 @@ local function pivotModuleByMain(module, main, targetMainCFrame)
 end
 
 
-local function getTeamColorPart(model)
-	local part = model:FindFirstChild("Team_color", true)
-	if part and part:IsA("BasePart") then
-		return part
-	end
-	return nil
-end
-
 local function getMountedModulesFolder(vehicle)
 	local folder = vehicle:FindFirstChild("MountedModules")
 	if not folder then
@@ -233,10 +225,12 @@ local function prepareModule(module)
 end
 
 local function paintModule(module, teamOwner)
-	local colorPart = getTeamColorPart(module)
-	if colorPart then
-		colorPart.Color = TeamColors.GetColor(teamOwner or 0)
-	end
+ local color = TeamColors.GetColor(teamOwner or 0)
+ for _, part in ipairs(module:GetDescendants()) do
+  if part:IsA("BasePart") and (part.Name == "Team_color" or part:GetAttribute("Team_color") == true) then
+   part.Color = color
+  end
+ end
 end
 
 local function getTemplate(moduleName)

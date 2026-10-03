@@ -6,8 +6,11 @@ VehicleCatalog.Terminals = {
 		SpawnPartName = "WSpawn",
 		PromptText = "Vehicle Terminal",
 		AllowedVehicles = {
-			Baggy = true,
+			Car = true,
 			Truck = true,
+			ACV = true,
+			IFV = true,
+			MBT = true,
 		},
 	},
 

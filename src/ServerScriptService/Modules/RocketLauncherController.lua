@@ -241,7 +241,66 @@ local function findVehicleOfLauncher(launcher)
 	return nil
 end
 
+-- Ground MLRS uses magazines; aircraft keep the original socket-based system.
+function RocketLauncherController.IsMagazineLauncher(launcher)
+ if not launcher or not launcher:IsA("Model") then return false end
+ local muzzle = launcher:FindFirstChild("Launcher", true)
+ if not muzzle or not muzzle:IsA("BasePart") then return false end
+ local vehicle = findVehicleOfLauncher(launcher)
+ return vehicle ~= nil and vehicle:GetAttribute("VehicleType") ~= "Helicopter"
+  and vehicle:GetAttribute("VehicleType") ~= "Plane" and vehicle:GetAttribute("Plane") ~= true
+end
+
+function RocketLauncherController.FireMagazineRocket(player, vehicle, launcher, muzzle)
+ if not RocketLauncherController.IsMagazineLauncher(launcher) then return false end
+ local ammoType = tostring(launcher:GetAttribute("Ammo_type") or launcher:GetAttribute("Allowed_ammo_type") or "")
+ if ammoType == "" then
+  warn("[RocketLauncherController] Set Ammo_type on ground launcher:", launcher:GetFullName())
+  return false
+ end
+ local template
+ for _, folder in ipairs(getAmmoFolders()) do
+  for _, candidate in ipairs(folder:GetChildren()) do
+   if candidate:IsA("Model") and tostring(candidate:GetAttribute("Ammo")) == "Rocket"
+    and (candidate.Name == ammoType or tostring(candidate:GetAttribute("Ammo_type")) == ammoType) then
+    template = candidate
+    break
+   end
+  end
+  if template then break end
+ end
+ if not template then
+  warn("[RocketLauncherController] Rocket template not found:", ammoType)
+  return false
+ end
+ local rocket = template:Clone()
+ local main = rocket:FindFirstChild("Main", true) or rocket.PrimaryPart
+ if not main or not main:IsA("BasePart") then
+  rocket:Destroy()
+  warn("[RocketLauncherController] Rocket template requires Main:", template.Name)
+  return false
+ end
+ rocket.PrimaryPart = main
+ rocket:SetAttribute("LoadedAmmo", false)
+ local axis = muzzle:GetAttribute("Launch_axis") or launcher:GetAttribute("Launch_axis") or "-X"
+ local direction = muzzle.CFrame:VectorToWorldSpace(axisToLocalVector(axis)).Unit
+ local localAxis = axisToLocalVector(axis)
+ local halfLength = math.abs(localAxis.X) * muzzle.Size.X / 2
+  + math.abs(localAxis.Y) * muzzle.Size.Y / 2 + math.abs(localAxis.Z) * muzzle.Size.Z / 2
+ local origin = muzzle.Position + direction * (halfLength + 0.05)
+ local result = ProjectileManager.FireRocketModel({
+  Owner = player, Weapon = vehicle, Launcher = launcher, Rocket = rocket,
+  OriginCFrame = CFrame.new(origin) * muzzle.CFrame.Rotation,
+  Direction = direction,
+  LaunchAxis = rocket:GetAttribute("Launch_axis") or "-Z",
+  CarrierVelocity = Vector3.zero,
+ })
+ if not result then rocket:Destroy() return false end
+ return true
+end
+
 function RocketLauncherController.IsRocketLauncher(launcher)
+	if RocketLauncherController.IsMagazineLauncher(launcher) then return false end
 	if not launcher or not launcher:IsA("Model") then
 		return false
 	end

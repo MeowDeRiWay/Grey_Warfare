@@ -355,7 +355,8 @@ local function setupTurret(turret)
 	local main = getPart(turret, "Main")
 	local horizontal = getPart(turret, "Tur_hor_opt")
 	local vertical = getPart(turret, "Tur_vert_opt")
-	local barrel = getPart(turret, "Barrel")
+	local magazineRocket = RocketLauncherController.IsMagazineLauncher(turret)
+	local barrel = magazineRocket and getPart(turret, "Launcher") or getPart(turret, "Barrel")
 	local isRocketLauncher =
 		RocketLauncherController.IsRocketLauncher(turret)
 
@@ -374,8 +375,7 @@ local function setupTurret(turret)
 		return nil
 	end
 
-	-- Gun turrets still require Barrel.
-	-- Rocket launchers use Ammo_module* instead and intentionally have no Barrel.
+	-- Guns use Barrel; ground MLRS uses Launcher; aircraft keep Ammo_module sockets.
 	if not barrel and not isRocketLauncher then
 		warn("[TurretController] Barrel not found:", turret:GetFullName())
 		return nil
@@ -444,6 +444,7 @@ local function setupTurret(turret)
 		Horizontal = horizontal,
 		Vertical = vertical,
 		Barrel = barrel,
+		MagazineRocket = magazineRocket,
 		IsRocketLauncher = isRocketLauncher,
 
 		YawMotor = yawMotor,
@@ -647,6 +648,7 @@ local function reloadTurret(data)
 	)
 
 	data.Reloading = true
+	turret:SetAttribute("Reloading", true)
 
 	local reloadTime =
 		tonumber(turret:GetAttribute("Reload_time")) or 1
@@ -658,6 +660,7 @@ local function reloadTurret(data)
 
 		turret:SetAttribute("Ammo_cur", magazineSize)
 		data.Reloading = false
+		turret:SetAttribute("Reloading", false)
 	end)
 
 	return true
@@ -707,12 +710,24 @@ local function fireTurret(player, vehicle, turret)
 		return
 	end
 
-	data.LastShotTime = now
+	if data.MagazineRocket then
+  if not RocketLauncherController.FireMagazineRocket(player, vehicle, turret, barrel) then
+   -- Rate limit invalid-template retries without spending ammunition.
+   data.LastShotTime = now
+   return
+  end
+  data.LastShotTime = now
+  currentAmmo -= 1
+  turret:SetAttribute("Ammo_cur", currentAmmo)
+  if currentAmmo <= 0 then reloadTurret(data) end
+  return
+ end
 
-	currentAmmo -= 1
-	turret:SetAttribute("Ammo_cur", currentAmmo)
+ data.LastShotTime = now
+ currentAmmo -= 1
+ turret:SetAttribute("Ammo_cur", currentAmmo)
 
-	local direction = getBarrelDirection(turret, barrel)
+ local direction = getBarrelDirection(turret, barrel)
 
 	local projectileSize =
 		tonumber(turret:GetAttribute("Projectile_size")) or 0.3

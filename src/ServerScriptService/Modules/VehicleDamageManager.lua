@@ -55,7 +55,8 @@ local function getAmmoValue(vehicle)
 		if module:IsA("Model") then
 			local magazines = tonumber(module:GetAttribute("Mag_cur"))
 			if magazines and magazines > 0 then
-				local price = tonumber(module:GetAttribute("Magazine_cargo_price"))
+				local price = tonumber(module:GetAttribute("Magazine_cargo_cost"))
+					or tonumber(module:GetAttribute("Magazine_cargo_price"))
 					or tonumber(module:GetAttribute("Cargo_per_mag"))
 					or DEFAULT_MAG_CARGO_COST
 				total += magazines * math.max(0, price)

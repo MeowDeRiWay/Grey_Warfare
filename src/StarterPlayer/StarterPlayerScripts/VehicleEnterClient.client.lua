@@ -177,7 +177,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 
 	-- E enters when standing nearby and exits when already seated.
 	if humanoid.SeatPart then
-		humanoid.Sit = false
+		enterRemote:FireServer("Exit")
 		return
 	end
 

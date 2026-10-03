@@ -4,6 +4,7 @@ local Workspace = game:GetService("Workspace")
 
 local Modules = script.Parent.Parent:WaitForChild("Modules")
 local VehicleAccess = require(Modules:WaitForChild("VehicleAccess"))
+local VehicleExitManager = require(Modules:WaitForChild("VehicleExitManager"))
 
 local ENTER_DISTANCE = 6
 local REQUEST_COOLDOWN = 0.35
@@ -216,6 +217,7 @@ local function watchVehicle(vehicle)
 	end
 
 	lockEmptySeat(seat)
+	local previousOccupant = seat.Occupant
 
 	seatConnections[seat] = seat:GetPropertyChangedSignal("Occupant"):Connect(function()
 		if not seat.Parent then
@@ -228,6 +230,17 @@ local function watchVehicle(vehicle)
 		end
 
 		if seat.Occupant == nil then
+   local departed = previousOccupant
+   previousOccupant = nil
+   if departed and not VehicleExitManager.IsExiting(departed) then
+    local placed = VehicleExitManager.PlaceOutside(vehicle, seat, departed)
+    if not placed and departed.Health > 0 and vehicle.Parent
+     and vehicle:GetAttribute("Destroyed") ~= true and not departed.SeatPart then
+     -- No free exit: keep the living player seated instead of inside the hull.
+     seat.Disabled = false
+     seat:Sit(departed)
+    end
+   end
 			-- Вийшов із машини -> знову блокуємо touch-enter.
 			task.defer(function()
 				if seat.Parent and seat.Occupant == nil then
@@ -236,6 +249,7 @@ local function watchVehicle(vehicle)
 				end
 			end)
 		else
+			previousOccupant = seat.Occupant
 			-- Поки водій сидить, Seat має бути активним для керування.
 			seat.Disabled = false
 			applySeatOffset(vehicle, seat)
@@ -279,6 +293,11 @@ enterRemote.OnServerEvent:Connect(function(player, vehicle)
 		return
 	end
 	lastRequest[player] = now
+
+	if vehicle == "Exit" then
+		VehicleExitManager.TryExit(player)
+		return
+	end
 
 	if not isActiveVehicle(vehicle) then
 		return
